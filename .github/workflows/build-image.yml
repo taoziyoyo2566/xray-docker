@@ -11,7 +11,7 @@ concurrency:
 
 # 发布目标的唯一定义处。所有 job 与脚本调用都从这里取值。
 env:
-  IMAGE_NAME: taoziyoyo2566/xray_docker
+  IMAGE_NAME: taoziyoyo2566/xray-docker
 
 jobs:
   discover:
@@ -110,6 +110,12 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=xray-${{ matrix.image_tag }}
           cache-to: type=gha,mode=max,scope=xray-${{ matrix.image_tag }}
+          # provenance 默认已开（mode=min）；提到 max 以记录完整构建来源。
+          # SBOM 与 index annotations 无关，不受该项未验证状态影响。
+          # 两者都产生 unknown/unknown 的 attestation manifest，
+          # verify-image.sh 只取 platform.os == "linux"，因此不受影响。
+          provenance: mode=max
+          sbom: true
 
       - name: Verify pushed multi-platform image
         env:
@@ -228,3 +234,24 @@ jobs:
             echo "- Digest: \`${DIGEST}\`"
             echo "- latest moved: \`${MOVED}\`"
           } >> "${GITHUB_STEP_SUMMARY}"
+
+  # Docker Hub 的 Overview 是使用者看到的第一屏，而它无法从 registry 推送中获得。
+  # 必须在发布成功之后运行：仓库在首次推送前并不存在。
+  sync-overview:
+    needs: reconcile-latest
+    if: success()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Sync README to Docker Hub overview
+        uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77 # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          # 需要具备写权限的 PAT；仅有 push 权限的令牌无法改写 Overview。
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.IMAGE_NAME }}
+          readme-filepath: ./README.md

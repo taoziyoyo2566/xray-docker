@@ -11,7 +11,7 @@ concurrency:
 
 # 与 build-image.yml 保持同一发布目标。
 env:
-  IMAGE_NAME: taoziyoyo2566/xray_docker
+  IMAGE_NAME: taoziyoyo2566/xray-docker
 
 jobs:
   audit:
