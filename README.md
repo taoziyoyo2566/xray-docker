@@ -102,8 +102,11 @@ docker pull taoziyoyo/xray-docker:latest
 Use an immutable version tag for controlled upgrades:
 
 ```bash
-docker pull taoziyoyo/xray-docker:v26.3.27-r2
+docker pull taoziyoyo/xray-docker:v26.3.27
 ```
+
+A `-rN` suffix appears only when an image revision has been published for that
+Xray version; a version with no revision override carries no suffix.
 
 For strictly reproducible deployments, pin the verified top-level image
 digest. A digest remains the authoritative image identity even if a tag is
