@@ -46,8 +46,11 @@ ENV TZ=Asia/Shanghai
 
 # 端口由挂载的配置决定，镜像无从得知，故默认不探测。
 # 设置 XRAY_HEALTH_PORT 后即对该端口做存活探测。
+# BusyBox 的 nc 没有 -z，只能靠一次真实连接判定：连上退 0，被拒退非 0。
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD [ -z "${XRAY_HEALTH_PORT}" ] || nc -z 127.0.0.1 "${XRAY_HEALTH_PORT}" || exit 1
+    CMD [ -z "${XRAY_HEALTH_PORT}" ] \
+        || nc -w 1 127.0.0.1 "${XRAY_HEALTH_PORT}" </dev/null >/dev/null 2>&1 \
+        || exit 1
 
 USER 10000
 

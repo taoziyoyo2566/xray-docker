@@ -39,7 +39,8 @@
 合并代码本身不触发 registry 写入。工作流包含三个 job：
 
 1. `discover`：读取官方 Release、官方资产 digest 和 Docker Hub 标签，生成缺失矩阵；
-2. `build-missing`：最多并行两个版本，按 digest 推送、双架构验证，再创建不可变标签；
+2. `build-missing`：串行逐个版本（`max-parallel: 1`），按 digest 推送、双架构验证，
+   再创建不可变标签；
 3. `reconcile-latest`：验证当前 stable，只有 digest 不一致时才移动 `latest`。
 
 任何缺失版本失败都会阻止 `latest` 对账。候选镜像在验证前没有公开 tag。
@@ -57,6 +58,21 @@
 5. 分页读取 Docker Hub tags API，将期望的不可变标签与现有标签做集合差；
 6. 差集成为 `build-missing` 动态矩阵；差集为空时不执行构建；
 7. 矩阵全部成功后，`reconcile-latest` 才验证 stable 并按需移动 `latest`。
+
+### 3.2 推送顺序与 Docker Hub 展示顺序
+
+Docker Hub 的标签页默认按 `last_updated` 倒序，没有按版本排序的选项，因此**推送
+先后就是展示顺序**。矩阵据此排序：prerelease 按 `published_at` 由旧到新，stable
+排在最后，`latest` 在 `reconcile-latest` 中最后移动。一次补齐多个标签后，页面自上
+而下呈现 `latest` → stable → beta 由新到旧。
+
+`max-parallel: 1` 是这个顺序成立的前提：并发 job 的完成先后不确定，标签时间会乱序。
+代价是补齐 N 个标签的耗时线性增长。
+
+**效力边界**：该排序只在**同一次运行推送多个标签**时生效。稳态下每次只推 0–1 个
+标签，顺序即推送时序；且 `latest` 仅在 stable digest 变化时才重推，因此两次 stable
+之间发布的 beta 会浮到 `latest` 之上。**不要期待 `latest` 长期置顶**——这与版本标签
+不可变的设计直接冲突，无法通过重排解决。
 
 这意味着 GitHub Release 是版本范围和资产 digest 的事实来源，Docker Hub 是“是否已发布”
 的事实来源，仓库只保存镜像修订覆盖表，不缓存“当前最新版”。发现器最多读取 10 页、
