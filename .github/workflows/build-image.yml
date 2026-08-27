@@ -239,7 +239,10 @@ jobs:
   # 必须在发布成功之后运行：仓库在首次推送前并不存在。
   sync-overview:
     needs: reconcile-latest
-    if: success()
+    # 只看直接依赖的结果。裸 success() 会把依赖图里被跳过的 build-missing
+    # 也算作“未成功”，导致无缺失标签的日常同步永远不更新 Overview。
+    if: needs.reconcile-latest.result == 'success'
+
     runs-on: ubuntu-latest
     permissions:
       contents: read
