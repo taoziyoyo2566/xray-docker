@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 availability="${repo_root}/docker-build/check-image-tag-available.sh"
-overview="${repo_root}/docker-build/README.md"
+overview="${repo_root}/README.md"
 fixture_dir="$(mktemp -d /tmp/xray-image-tags-test.XXXXXX)"
 trap 'rm -rf -- "${fixture_dir}"' EXIT
 

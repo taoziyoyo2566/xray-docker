@@ -1,0 +1,49 @@
+name: Repository quality checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  xray-image-inputs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Validate Xray image tooling
+        run: |
+          bash -n docker-build/check-image-tag-available.sh
+          bash -n docker-build/discover-release-window.sh
+          bash -n docker-build/audit-image-tags.sh
+          bash -n docker-build/verify-image.sh
+          for t in tests/*.sh; do bash -n "$t"; done
+          for t in tests/*.sh; do bash "$t"; done
+
+  whitespace:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Check trailing whitespace
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          if [[ -n "${BASE_SHA}" ]]; then
+            git diff --check "${BASE_SHA}...${AFTER_SHA}"
+          elif [[ "${BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+            git diff --check "${AFTER_SHA}^" "${AFTER_SHA}"
+          else
+            git diff --check "${BEFORE_SHA}" "${AFTER_SHA}"
+          fi

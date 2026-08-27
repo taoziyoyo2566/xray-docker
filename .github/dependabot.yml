@@ -1,0 +1,8 @@
+version: 2
+updates:
+  # Actions 已按 commit SHA 钉住；dependabot 负责在上游发版时提 PR 更新 SHA。
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

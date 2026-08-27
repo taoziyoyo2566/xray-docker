@@ -280,7 +280,7 @@ curl --fail --silent --show-error --location \
 
 ## 14. Docker Hub Overview 与凭据
 
-Overview 源文件是 [`docker-build/README.md`](../../docker-build/README.md)。镜像发布不会
+Overview 源文件是 [`README.md`](../../README.md)。镜像发布不会
 自动更新 Docker Hub Overview；更新说明文字是独立外部写操作。
 
 GitHub Actions 使用 Repository Secrets 登录。不要把 PAT 放进 Git、日志、证据或聊天。
