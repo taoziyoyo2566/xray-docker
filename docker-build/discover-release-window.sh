@@ -85,11 +85,27 @@ if [[ -n "${TAG_JSON_FILE:-}" ]]; then
 else
   tags_json='{"results":[]}'
   next_url="https://hub.docker.com/v2/repositories/${image_name}/tags?page_size=100"
+  first_page=1
   while [[ -n "${next_url}" ]]; do
-    page_json="$("${curl_bin}" --fail --silent --show-error --location "${next_url}")"
+    response="$("${curl_bin}" --silent --show-error --location \
+      --write-out $'\n%{http_code}' "${next_url}")"
+    status="${response##*$'\n'}"
+    page_json="${response%$'\n'*}"
+    # 仓库尚不存在时 Docker Hub 返回 404。首次发布时这是正常状态，
+    # 等价于“没有任何标签”，整个窗口都待构建。仅首页接受该状态：
+    # 后续页的 URL 来自 API 自身，那里出现 404 属于异常。
+    if [[ "${status}" == "404" && "${first_page}" -eq 1 ]]; then
+      echo "Docker Hub repository does not exist yet: ${image_name}" >&2
+      break
+    fi
+    if [[ "${status}" != "200" ]]; then
+      echo "Docker Hub returned HTTP ${status} while listing tags for ${image_name}" >&2
+      exit 1
+    fi
     tags_json="$(jq -sc '{results: (.[0].results + .[1].results)}' \
       <(printf '%s\n' "${tags_json}") <(printf '%s\n' "${page_json}"))"
     next_url="$(jq -r '.next // empty' <<< "${page_json}")"
+    first_page=0
   done
 fi
 if ! jq -e '.results | type == "array"' <<< "${tags_json}" >/dev/null; then

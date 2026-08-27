@@ -71,4 +71,34 @@ if RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" \
   exit 1
 fi
 
+# 首次发布时 Docker Hub 仓库尚不存在，tags API 返回 404。
+# 该路径此前完全未被覆盖：所有用例都用 TAG_JSON_FILE 绕过了 curl。
+mock_curl="${fixture_dir}/curl"
+cat > "${mock_curl}" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n%s' '{"results":[],"next":null}' "${MOCK_STATUS:-200}"
+MOCK
+chmod 755 "${mock_curl}"
+
+printf '%s\n' '{}' > "${revisions}"
+: > "${output}"
+RELEASES_JSON_FILE="${releases}" CURL_BIN="${mock_curl}" MOCK_STATUS=404 GITHUB_OUTPUT="${output}" \
+  bash "${repo_root}/docker-build/discover-release-window.sh" \
+    example/test-image "${revisions}" >/dev/null 2>&1
+
+if ! grep -Fx 'missing_count=4' "${output}" >/dev/null; then
+  echo 'a missing Docker Hub repository was not treated as an empty tag set' >&2
+  sed -n 's/^missing_count=/  actual missing_count=/p' "${output}" >&2
+  exit 1
+fi
+
+# 其他 HTTP 错误必须仍然失败，不能被一并吞掉。
+if RELEASES_JSON_FILE="${releases}" CURL_BIN="${mock_curl}" MOCK_STATUS=500 \
+  bash "${repo_root}/docker-build/discover-release-window.sh" \
+    example/test-image "${revisions}" >/dev/null 2>&1; then
+  echo 'a Docker Hub server error was accepted as an empty tag set' >&2
+  exit 1
+fi
+
 echo 'Xray release discovery tests passed'
