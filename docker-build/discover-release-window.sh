@@ -3,22 +3,16 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 image_name="${1:-taoziyoyo2566/xray-docker}"
-revisions_file="${2:-${repo_root}/docker-build/XRAY_IMAGE_REVISIONS.json}"
 curl_bin="${CURL_BIN:-curl}"
 
 if [[ ! "${image_name}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
   echo "invalid Docker Hub image name: '${image_name}'" >&2
   exit 1
 fi
-if ! revisions_json="$(jq -ce '
-  if type == "object"
-     and all(keys[]; test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
-     and all(.[]; type == "number" and . >= 0 and floor == .)
-  then . else error("invalid revisions ledger") end
-' "${revisions_file}")"; then
-  echo "invalid image revisions ledger: ${revisions_file}" >&2
-  exit 1
-fi
+
+# 决定镜像内容的那些文件的指纹。已发布的标签把它记在 label 里，
+# 比对不上就说明该标签是用旧的镜像定义构建的，需要重建。
+build_inputs="$(bash "${repo_root}/docker-build/build-fingerprint.sh")"
 
 if [[ -n "${RELEASES_JSON_FILE:-}" ]]; then
   releases_json="$(< "${RELEASES_JSON_FILE}")"
@@ -52,7 +46,7 @@ else
   done
 fi
 
-window_json="$(jq -ce --argjson revisions "${revisions_json}" '
+window_json="$(jq -ce '
   if type != "array" then error("releases response is not an array") else . end
   | (to_entries | map(select(.value.draft == false and .value.prerelease == false)) | first | .key) as $stable_index
   | if $stable_index == null then error("no non-draft stable release found") else . end
@@ -61,7 +55,6 @@ window_json="$(jq -ce --argjson revisions "${revisions_json}" '
   | map(
       . as $release
       | .tag_name as $version
-      | ($revisions[$version] // 0) as $revision
       | ([.assets[]? | select(.name == "Xray-linux-64.zip") | .digest] | first) as $amd64
       | ([.assets[]? | select(.name == "Xray-linux-arm64-v8a.zip") | .digest] | first) as $arm64
       | if ($version | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$") | not) then error("invalid release tag: " + $version)
@@ -71,8 +64,7 @@ window_json="$(jq -ce --argjson revisions "${revisions_json}" '
           version: $version,
           prerelease: .prerelease,
           channel: (if .prerelease then "beta" else "stable" end),
-          revision: $revision,
-          image_tag: ($version + (if .prerelease then "-beta" else "" end) + (if $revision == 0 then "" else "-r" + ($revision | tostring) end)),
+          image_tag: ($version + (if .prerelease then "-beta" else "" end)),
           amd64_sha: ($amd64 | sub("^sha256:"; "")),
           arm64_sha: ($arm64 | sub("^sha256:"; "")),
           published_at: .published_at
@@ -114,12 +106,71 @@ if ! jq -e '.results | type == "array"' <<< "${tags_json}" >/dev/null; then
 fi
 
 registry_names="$(jq -c '[.results[].name]' <<< "${tags_json}")"
+
+# 读取已发布标签记录的构建指纹。返回 {tag: fingerprint} 映射；
+# 标签不存在或未记录该 label 时该键缺失，视为需要重建。
+# 测试通过 PUBLISHED_INPUTS_FILE 直接提供该映射，绕过 registry。
+read_published_inputs() {
+  if [[ -n "${PUBLISHED_INPUTS_FILE:-}" ]]; then
+    cat "${PUBLISHED_INPUTS_FILE}"
+    return
+  fi
+
+  local accept_index='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json'
+  local accept_manifest='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+  local token
+  token="$("${curl_bin}" --fail --silent --show-error --location \
+    "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${image_name}:pull" \
+    | jq -r '.token')"
+  if [[ -z "${token}" || "${token}" == "null" ]]; then
+    echo "could not obtain a registry pull token for ${image_name}" >&2
+    exit 1
+  fi
+
+  local out='{}' tag index child manifest config value
+  while IFS= read -r tag; do
+    jq -e --arg t "${tag}" '.results | any(.name == $t)' <<< "${tags_json}" >/dev/null || continue
+
+    index="$("${curl_bin}" --silent --show-error --location \
+      -H "Authorization: Bearer ${token}" -H "Accept: ${accept_index},${accept_manifest}" \
+      "https://registry-1.docker.io/v2/${image_name}/manifests/${tag}")"
+    child="$(jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | first // empty' <<< "${index}")"
+    if [[ -z "${child}" ]]; then
+      echo "could not resolve an amd64 manifest for ${image_name}:${tag}" >&2
+      exit 1
+    fi
+
+    manifest="$("${curl_bin}" --silent --show-error --location \
+      -H "Authorization: Bearer ${token}" -H "Accept: ${accept_manifest}" \
+      "https://registry-1.docker.io/v2/${image_name}/manifests/${child}")"
+    config="$(jq -r '.config.digest // empty' <<< "${manifest}")"
+    if [[ -z "${config}" ]]; then
+      echo "could not resolve an image config for ${image_name}:${tag}" >&2
+      exit 1
+    fi
+
+    # blob 请求会被重定向到 CDN，必须跟随重定向。
+    value="$("${curl_bin}" --silent --show-error --location \
+      -H "Authorization: Bearer ${token}" \
+      "https://registry-1.docker.io/v2/${image_name}/blobs/${config}" \
+      | jq -r '.config.Labels["io.taoziyoyo.xray.build-inputs"] // empty')"
+    out="$(jq -c --arg t "${tag}" --arg v "${value}" '.[$t] = $v' <<< "${out}")"
+  done < <(jq -r '.[].image_tag' <<< "${window_json}")
+
+  printf '%s' "${out}"
+}
+
+published_inputs="$(read_published_inputs)"
 # Docker Hub 的 tag 页默认按 last_updated 倒序，因此推送顺序决定展示顺序。
 # 输入为 GitHub 的新→旧顺序；先 reverse 再按 published_at 稳定排序，
 # 使同一秒发布的 release 也保持旧→新（jq 的 sort_by 是稳定排序）。
 # 最后把唯一的 stable 排到末位，令其成为最后推送、在页面上位于 beta 之上的一个。
-missing_json="$(jq -c --argjson names "${registry_names}" '
-  [.[] | select(.image_tag as $tag | ($names | index($tag) | not))]
+missing_json="$(jq -c --argjson names "${registry_names}" \
+  --argjson published "${published_inputs}" --arg inputs "${build_inputs}" '
+  [.[] | select(.image_tag as $tag
+      | ($names | index($tag) | not)              # 标签尚不存在
+        or (($published[$tag] // "") != $inputs)) # 或由旧的镜像定义构建
+  ]
   | reverse
   | sort_by(.published_at)
   | (map(select(.prerelease)) + map(select(.prerelease | not)))
@@ -140,9 +191,11 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "missing_count=${missing_count}"
     echo "stable_version=${stable_version}"
     echo "stable_tag=${stable_tag}"
+    echo "build_inputs=${build_inputs}"
   } >> "${GITHUB_OUTPUT}"
 fi
 
 echo "Release window: ${stable_version} through $(jq -r 'first.version' <<< "${window_json}")"
-jq -r '.[] | [.image_tag, .channel, ("r" + (.revision | tostring))] | @tsv' <<< "${window_json}"
-echo "Missing immutable tags: ${missing_count}"
+jq -r '.[] | [.image_tag, .channel] | @tsv' <<< "${window_json}"
+echo "Build inputs fingerprint: ${build_inputs}"
+echo "Tags to build or refresh: ${missing_count}"

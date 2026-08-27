@@ -16,16 +16,16 @@
 
 ## 2. 标签契约
 
-| 上游状态 | 首次镜像标签 | 后续镜像修订 |
-|---|---|---|
-| stable | `vX.Y.Z` | `vX.Y.Z-rN` |
-| GitHub prerelease | `vX.Y.Z-beta` | `vX.Y.Z-beta-rN` |
+| 上游状态 | 镜像标签 |
+|---|---|
+| stable | `vX.Y.Z` |
+| GitHub prerelease | `vX.Y.Z-beta` |
 
-- 裸版本和 `-beta` 隐含 `r0`，发布后永不移动；
-- `latest` 是唯一浮动标签，只指向当前 stable；
+- 版本标签是移动别名，始终指向该上游版本当前最好的构建；
+- `latest` 只指向当前 stable；
 - beta 永不指向 `latest`；
-- 同一上游版本的镜像包装发生变化时，在
-  `docker-build/XRAY_IMAGE_REVISIONS.json` 中增加该版本的修订号；
+- 镜像定义变化时无需人工登记：构建输入的指纹写在镜像 label
+  `io.taoziyoyo.xray.build-inputs` 里，同步时比对不上即自动重建；
 - GitHub 同一 tag 的官方 asset digest 如果变化，也必须创建新 `rN`，不得覆盖旧标签；
 - 运行时和发布证据使用顶层 `sha256:` digest。
 
@@ -121,18 +121,16 @@ Docker Hub 的标签页默认按 `last_updated` 倒序，没有按版本排序�
 git status --short --branch
 
 bash -n \
-  docker-build/check-image-tag-available.sh \
+  docker-build/build-fingerprint.sh \
   docker-build/discover-release-window.sh \
   docker-build/audit-image-tags.sh \
   docker-build/verify-image.sh \
   tests/test_xray_release_discovery.sh \
-  tests/test_xray_image_tags.sh \
   tests/test_xray_image_tag_audit.sh \
   tests/test_xray_image_workflow.sh \
   tests/test_xray_image_verify.sh
 
 bash tests/test_xray_release_discovery.sh
-bash tests/test_xray_image_tags.sh
 bash tests/test_xray_image_tag_audit.sh
 bash tests/test_xray_image_workflow.sh
 bash tests/test_xray_image_verify.sh
@@ -247,21 +245,16 @@ curl --fail --silent --show-error --location \
 - 超过一个预期周期没有 scheduled run 时，先检查 workflow 是否仍在默认分支、Actions
   是否启用及仓库调度状态，再人工执行同一 workflow。
 
-## 10. 镜像层修订
+## 10. 镜像定义变更
 
-修改 Dockerfile、entrypoint 或其他镜像内容时，先确定受影响的 Release。在
-`docker-build/XRAY_IMAGE_REVISIONS.json` 中记录新修订：
+修改 `dockerfile`、`entrypoint.sh`、`NOTICE` 或 `.dockerignore` 后**不需要任何登记
+动作**。这些文件的指纹由 `docker-build/build-fingerprint.sh` 计算，构建时写入镜像
+label `io.taoziyoyo.xray.build-inputs`。
 
-```json
-{
-  "v26.3.27": 1,
-  "v26.7.28": 1
-}
-```
+下一次同步会读回当前窗口每个标签的该 label：与仓库当前指纹不一致、或标签根本没有
+这个 label 的，都会被重建并重新指向。因此改完合入默认分支即可，等每日同步自动收敛。
 
-新上游 Release 未列入 ledger 时默认 `r0`。修订 ledger 与镜像内容变更必须在同一 PR
-审阅；只修改 ledger 而没有对应镜像变化是不合规发布。合入后手动同步，发现器会把
-新的 `-rN` 视为缺失不可变标签。
+需要立即生效时用 `workflow_dispatch` 手动跑一次，路径与定时运行完全相同。
 
 ## 11. 失败与重试
 

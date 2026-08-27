@@ -34,10 +34,11 @@ and `--security-opt no-new-privileges`.
 | `latest` | Newest verified stable. The only tag that moves. |
 | `vX.Y.Z` | An upstream stable release. Immutable. |
 | `vX.Y.Z-beta` | An upstream prerelease. Immutable, never aliased to `latest`. |
-| `vX.Y.Z-rN` · `vX.Y.Z-beta-rN` | Rebuild of the same Xray version with a changed image. Immutable. |
 
-A published version tag is never moved to different content. Pin the digest if
-you need that guarantee to survive tag deletion.
+Version tags move. When the image definition changes, such as a base image
+update or a packaging fix, the tags in the current window are rebuilt and
+re-pointed, so `v26.3.27` always means the best build of that Xray version.
+Pin the digest if you need content that never changes.
 
 Tags follow upstream automatically: the newest stable plus every prerelease
 published after it. Older tags are kept, never deleted.

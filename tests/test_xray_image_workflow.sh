@@ -33,7 +33,7 @@ fi
 
 build_line="$(grep -nF -- '- name: Build and push image candidate' "${workflow}" | cut -d: -f1)"
 verify_line="$(grep -nF -- '- name: Verify pushed multi-platform image' "${workflow}" | cut -d: -f1)"
-publish_line="$(grep -nF -- '- name: Publish immutable version tag' "${workflow}" | cut -d: -f1)"
+publish_line="$(grep -nF -- '- name: Publish version tag' "${workflow}" | cut -d: -f1)"
 if (( build_line >= verify_line || verify_line >= publish_line )); then
   echo 'image publication steps are not ordered build, verify, publish' >&2
   exit 1
@@ -45,7 +45,27 @@ if grep -Eq '^[[:space:]]+tags:' <<< "${build_block}"; then
   exit 1
 fi
 
-grep -F 'bash docker-build/check-image-tag-available.sh' "${workflow}" >/dev/null
+# 版本标签现在是移动别名，重新指向属正常发布路径；旧的“拒绝覆盖”守卫会挡住它。
+if grep -qF 'check-image-tag-available' "${workflow}"; then
+  echo 'workflow still refuses to re-point a moving version tag' >&2
+  exit 1
+fi
+
+# 构建指纹必须写进镜像，否则下一次同步无从判断标签是否由当前定义构建。
+grep -F 'io.taoziyoyo.xray.build-inputs=' "${workflow}" >/dev/null
+
+# Overview 承载标签契约。断言标签标识符本身而不是措辞。
+overview="${repo_root}/README.md"
+for form in '`latest`' '`vX.Y.Z`' '`vX.Y.Z-beta`'; do
+  if ! grep -qF "${form}" "${overview}"; then
+    echo "overview no longer documents the ${form} tag form" >&2
+    exit 1
+  fi
+done
+if grep -qF -- '-rN' "${overview}"; then
+  echo 'overview still documents a revision suffix that is no longer published' >&2
+  exit 1
+fi
 # shellcheck disable=SC2016
 grep -F -- '--tag "${IMAGE_NAME}:${IMAGE_TAG}"' "${workflow}" >/dev/null
 # shellcheck disable=SC2016

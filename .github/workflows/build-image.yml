@@ -23,6 +23,7 @@ jobs:
       missing_count: ${{ steps.releases.outputs.missing_count }}
       stable_tag: ${{ steps.releases.outputs.stable_tag }}
       stable_version: ${{ steps.releases.outputs.stable_version }}
+      build_inputs: ${{ steps.releases.outputs.build_inputs }}
     steps:
       - name: Checkout codebase
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,12 +64,6 @@ jobs:
       - name: Checkout codebase
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Protect immutable version tag
-        shell: bash
-        run: >-
-          bash docker-build/check-image-tag-available.sh
-          "${IMAGE_NAME}" "${{ matrix.image_tag }}"
-
       - name: Set up QEMU
         uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
 
@@ -92,8 +87,8 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             io.taoziyoyo.xray.version=${{ matrix.version }}
             io.taoziyoyo.xray.image-tag=${{ matrix.image_tag }}
-            io.taoziyoyo.xray.image-revision=${{ matrix.revision }}
             io.taoziyoyo.xray.channel=${{ matrix.channel }}
+            io.taoziyoyo.xray.build-inputs=${{ needs.discover.outputs.build_inputs }}
 
       - name: Build and push image candidate
         id: build
@@ -124,13 +119,7 @@ jobs:
         shell: bash
         run: bash docker-build/verify-image.sh "${IMAGE_REF}" "${VERSION}"
 
-      - name: Recheck immutable version tag
-        shell: bash
-        run: >-
-          bash docker-build/check-image-tag-available.sh
-          "${IMAGE_NAME}" "${{ matrix.image_tag }}"
-
-      - name: Publish immutable version tag
+      - name: Publish version tag
         env:
           IMAGE_REF: ${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           IMAGE_TAG: ${{ matrix.image_tag }}
