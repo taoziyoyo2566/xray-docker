@@ -33,6 +33,36 @@ grep -Fx 'missing_count=1' "${output}" >/dev/null
 jq -e '.include[0].image_tag == "v26.4.2-beta" and .include[0].amd64_sha == ("c" * 64)' \
   <<< "$(sed -n 's/^matrix=//p' "${output}")" >/dev/null
 
+# 推送顺序决定 Docker Hub 的默认展示顺序，因此必须断言完整顺序而非仅首项。
+# 覆盖三件事：多 tag 缺失、published_at 不同、以及同一秒发布的 tie-break。
+jq -n '
+  def asset($name; $char): {name: $name, digest: ("sha256:" + ($char * 64))};
+  def release($tag; $pre; $char; $at): {
+    tag_name: $tag, prerelease: $pre, draft: false, published_at: $at,
+    assets: [asset("Xray-linux-64.zip"; $char), asset("Xray-linux-arm64-v8a.zip"; $char)]
+  };
+  [release("v26.5.3"; true; "1"; "2026-05-02T00:00:00Z"),
+   release("v26.5.2"; true; "2"; "2026-05-02T00:00:00Z"),
+   release("v26.5.1"; true; "3"; "2026-05-01T00:00:00Z"),
+   release("v26.4.9"; false; "4"; "2026-04-09T00:00:00Z")]
+' > "${releases}"
+printf '%s\n' '{}' > "${revisions}"
+printf '%s\n' '{"results":[]}' > "${tags}"
+: > "${output}"
+
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" GITHUB_OUTPUT="${output}" \
+  bash "${repo_root}/docker-build/discover-release-window.sh" \
+    example/test-image "${revisions}" >/dev/null
+
+order="$(sed -n 's/^matrix=//p' "${output}" | jq -c '[.include[].image_tag]')"
+expected_order='["v26.5.1-beta","v26.5.2-beta","v26.5.3-beta","v26.4.9"]'
+if [[ "${order}" != "${expected_order}" ]]; then
+  echo "build order is wrong" >&2
+  echo "  expected: ${expected_order}" >&2
+  echo "  actual:   ${order}" >&2
+  exit 1
+fi
+
 printf '%s\n' '{"invalid":-1}' > "${revisions}"
 if RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \

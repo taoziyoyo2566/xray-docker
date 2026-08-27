@@ -112,6 +112,43 @@ For strictly reproducible deployments, pin the verified top-level image
 digest. A digest remains the authoritative image identity even if a tag is
 deleted.
 
+## Configuration
+
+Mount a single config file at `/config.json`, or mount a directory of JSON
+fragments at `/etc/xray/conf.d`. The single file wins when both are present.
+
+```bash
+docker run --rm -v ./config.json:/config.json:ro taoziyoyo/xray-docker:latest
+docker run --rm -v ./conf.d:/etc/xray/conf.d:ro taoziyoyo/xray-docker:latest
+```
+
+The configuration is validated before Xray starts. An invalid configuration
+exits non-zero with the parser error instead of entering a restart loop.
+
+When using a fragment directory, note Xray's merge semantics: `inbounds` and
+`outbounds` arrays are appended across files, but objects such as `routing`,
+`dns`, and `policy` are **replaced wholesale** by the last file that defines
+them. Keep each of those in exactly one fragment.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `XRAY_CONFIG` | `/config.json` | Single-file configuration path |
+| `XRAY_CONFDIR` | `/etc/xray/conf.d` | Fragment directory, used when the single file is absent |
+| `XRAY_LOCATION_ASSET` | `/usr/local/share/xray` | Where `geoip.dat` and `geosite.dat` are read from; override or bind-mount to supply your own rule sets |
+| `XRAY_HEALTH_PORT` | unset | When set, the container healthcheck probes this TCP port on loopback. Unset means no probe, because the image cannot know which port your configuration listens on |
+| `TZ` | `Asia/Shanghai` | Container timezone |
+
+## Bundled rule data
+
+`geoip.dat` and `geosite.dat` ship with the image at
+`/usr/local/share/xray`, so `geoip:` and `geosite:` routing rules work out of
+the box. They are the files published inside the official Xray release, frozen
+at that release's build time. To use a more frequently updated rule set, mount
+your own directory over that path.
+
+Component licenses are recorded in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md)
+and in `/usr/share/licenses/xray/` inside the image.
+
 ## Publication and verification
 
 Images are pushed without a public tag, verified on both supported platforms,

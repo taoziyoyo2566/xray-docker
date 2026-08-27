@@ -1,4 +1,5 @@
-# 构建上下文只需要 dockerfile 与 entrypoint.sh。
+# 构建上下文只需要 dockerfile 引用的文件。
 # 同目录的发布工具脚本与修订账本不参与构建，排除以缩小上下文。
 *
 !entrypoint.sh
+!NOTICE

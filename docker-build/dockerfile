@@ -2,11 +2,6 @@ FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec4
 
 LABEL maintainer="taoziyoyo <dev@taoziyoyo.com>"
 
-WORKDIR /
-
-RUN apk add --no-cache ca-certificates tzdata \
-    && mkdir -p /var/log/xray
-
 ARG XRAY_VERSION
 ARG XRAY_SHA256_AMD64
 ARG XRAY_SHA256_ARM64
@@ -15,7 +10,14 @@ ARG TARGETARCH
 LABEL org.opencontainers.image.version="${XRAY_VERSION}" \
       io.taoziyoyo.xray.version="${XRAY_VERSION}"
 
+# Xray 按可执行文件所在目录解析 geoip.dat/geosite.dat。资产放标准路径并显式声明，
+# 使其可被挂载覆盖，且不再依赖二进制与数据同目录这一隐式行为。
+ENV XRAY_LOCATION_ASSET=/usr/local/share/xray
+
+# 单层完成安装：属主/权限一次定妥。后续层若再 chown 二进制会触发 copy-up，
+# 使 36MB 的 xray 在镜像中出现第二份。
 RUN set -eux \
+    && apk add --no-cache ca-certificates tzdata \
     && case "${TARGETARCH}" in \
         amd64) XRAY_ASSET="Xray-linux-64.zip"; XRAY_SHA256="${XRAY_SHA256_AMD64}" ;; \
         arm64) XRAY_ASSET="Xray-linux-arm64-v8a.zip"; XRAY_SHA256="${XRAY_SHA256_ARM64}" ;; \
@@ -23,20 +25,29 @@ RUN set -eux \
     esac \
     && [ -n "${XRAY_VERSION}" ] \
     && [ "${#XRAY_SHA256}" -eq 64 ] \
-    && wget -O "/tmp/${XRAY_ASSET}" "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" \
-    && printf '%s  %s\n' "${XRAY_SHA256}" "/tmp/${XRAY_ASSET}" | sha256sum -c - \
-    && unzip "/tmp/${XRAY_ASSET}" -d /usr/bin/ \
-    && rm -f "/tmp/${XRAY_ASSET}" \
-    && chmod +x /usr/bin/xray \
+    && wget -O /tmp/xray.zip \
+        "https://github.com/XTLS/Xray-core/releases/download/${XRAY_VERSION}/${XRAY_ASSET}" \
+    && printf '%s  %s\n' "${XRAY_SHA256}" /tmp/xray.zip | sha256sum -c - \
+    && unzip -q /tmp/xray.zip -d /tmp/xray \
+    && install -D -m 0755 /tmp/xray/xray /usr/bin/xray \
+    && install -D -m 0644 /tmp/xray/geoip.dat "${XRAY_LOCATION_ASSET}/geoip.dat" \
+    && install -D -m 0644 /tmp/xray/geosite.dat "${XRAY_LOCATION_ASSET}/geosite.dat" \
+    && install -D -m 0644 /tmp/xray/LICENSE /usr/share/licenses/xray/LICENSE \
+    && rm -rf /tmp/xray.zip /tmp/xray \
+    && adduser -D -u 10000 xray \
+    && install -d -m 0755 -o 10000 -g 10000 /var/log/xray \
     && xray -version | head -n 1 | grep -qF "${XRAY_VERSION#v}"
 
-COPY ./entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh \
-    && adduser -D -u 10000 xray \
-    && chown xray /usr/bin/xray \
-    && chown -R xray /var/log/xray
+# geoip.dat 采用 CC-BY-SA-4.0，署名义务随镜像分发而存在，必须留在镜像内。
+COPY --chmod=0644 ./NOTICE /usr/share/licenses/xray/NOTICE
+COPY --chmod=0755 ./entrypoint.sh /entrypoint.sh
 
 ENV TZ=Asia/Shanghai
+
+# 端口由挂载的配置决定，镜像无从得知，故默认不探测。
+# 设置 XRAY_HEALTH_PORT 后即对该端口做存活探测。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD [ -z "${XRAY_HEALTH_PORT}" ] || nc -z 127.0.0.1 "${XRAY_HEALTH_PORT}" || exit 1
 
 USER 10000
 

@@ -98,7 +98,16 @@ if ! jq -e '.results | type == "array"' <<< "${tags_json}" >/dev/null; then
 fi
 
 registry_names="$(jq -c '[.results[].name]' <<< "${tags_json}")"
-missing_json="$(jq -c --argjson names "${registry_names}" '[.[] | select(.image_tag as $tag | ($names | index($tag) | not))]' <<< "${window_json}")"
+# Docker Hub 的 tag 页默认按 last_updated 倒序，因此推送顺序决定展示顺序。
+# 输入为 GitHub 的新→旧顺序；先 reverse 再按 published_at 稳定排序，
+# 使同一秒发布的 release 也保持旧→新（jq 的 sort_by 是稳定排序）。
+# 最后把唯一的 stable 排到末位，令其成为最后推送、在页面上位于 beta 之上的一个。
+missing_json="$(jq -c --argjson names "${registry_names}" '
+  [.[] | select(.image_tag as $tag | ($names | index($tag) | not))]
+  | reverse
+  | sort_by(.published_at)
+  | (map(select(.prerelease)) + map(select(.prerelease | not)))
+' <<< "${window_json}")"
 matrix="$(jq -cn --argjson include "${missing_json}" '{include: $include}')"
 expected_tags="$(jq -c '[.[].image_tag]' <<< "${window_json}")"
 prerelease_versions="$(jq -c '[.[] | select(.prerelease) | .version]' <<< "${window_json}")"

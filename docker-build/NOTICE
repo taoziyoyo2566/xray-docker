@@ -1,0 +1,24 @@
+This image redistributes the following third-party components unmodified.
+
+Xray-core  --  https://github.com/XTLS/Xray-core
+  Mozilla Public License 2.0 (MPL-2.0).
+  Source Code Form is available from the upstream repository above.
+  Full license text: /usr/share/licenses/xray/LICENSE
+
+geosite.dat  --  https://github.com/v2fly/domain-list-community
+  MIT License.
+  Shipped inside the official Xray release asset.
+
+geoip.dat  --  https://github.com/v2fly/geoip
+  Creative Commons Attribution-ShareAlike 4.0 International (CC-BY-SA-4.0).
+  https://creativecommons.org/licenses/by-sa/4.0/
+  Shipped inside the official Xray release asset.
+  Attribution: GeoIP data produced by the v2fly/geoip project.
+  Redistribution, modified or not, must preserve this attribution and be
+  shared under the same license.
+
+Alpine Linux base image  --  https://alpinelinux.org/
+  Individual packages carry their own licenses.
+
+The image build tooling itself is MIT-licensed:
+https://github.com/taoziyoyo2566/xray-docker
