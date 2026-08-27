@@ -11,7 +11,7 @@ concurrency:
 
 # 发布目标的唯一定义处。所有 job 与脚本调用都从这里取值。
 env:
-  IMAGE_NAME: taoziyoyo/xray-docker
+  IMAGE_NAME: taoziyoyo2566/xray_docker
 
 jobs:
   discover:

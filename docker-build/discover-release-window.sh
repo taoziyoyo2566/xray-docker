@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image_name="${1:-taoziyoyo/xray-docker}"
+image_name="${1:-taoziyoyo2566/xray_docker}"
 revisions_file="${2:-${repo_root}/docker-build/XRAY_IMAGE_REVISIONS.json}"
 curl_bin="${CURL_BIN:-curl}"
 

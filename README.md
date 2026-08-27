@@ -96,13 +96,13 @@ Beta tags are immutable and never receive a moving alias.
 Use `latest` when automatic stable updates are desired:
 
 ```bash
-docker pull taoziyoyo/xray-docker:latest
+docker pull taoziyoyo2566/xray_docker:latest
 ```
 
 Use an immutable version tag for controlled upgrades:
 
 ```bash
-docker pull taoziyoyo/xray-docker:v26.3.27
+docker pull taoziyoyo2566/xray_docker:v26.3.27
 ```
 
 A `-rN` suffix appears only when an image revision has been published for that
@@ -118,8 +118,8 @@ Mount a single config file at `/config.json`, or mount a directory of JSON
 fragments at `/etc/xray/conf.d`. The single file wins when both are present.
 
 ```bash
-docker run --rm -v ./config.json:/config.json:ro taoziyoyo/xray-docker:latest
-docker run --rm -v ./conf.d:/etc/xray/conf.d:ro taoziyoyo/xray-docker:latest
+docker run --rm -v ./config.json:/config.json:ro taoziyoyo2566/xray_docker:latest
+docker run --rm -v ./conf.d:/etc/xray/conf.d:ro taoziyoyo2566/xray_docker:latest
 ```
 
 The configuration is validated before Xray starts. An invalid configuration

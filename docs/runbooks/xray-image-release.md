@@ -5,7 +5,7 @@
 ## 1. 目标与边界
 
 本仓库把 XTLS/Xray-core 官方 GitHub Releases 同步为
-`taoziyoyo/xray-docker` 多架构镜像。活动窗口定义为：
+`taoziyoyo2566/xray_docker` 多架构镜像。活动窗口定义为：
 
 1. GitHub Releases API 中按发布时间从新到旧的第一个非 draft stable；
 2. 该 stable 之前所有更新的非 draft prerelease；
@@ -59,6 +59,11 @@
 6. 差集成为 `build-missing` 动态矩阵；差集为空时不执行构建；
 7. 矩阵全部成功后，`reconcile-latest` 才验证 stable 并按需移动 `latest`。
 
+
+这意味着 GitHub Release 是版本范围和资产 digest 的事实来源，Docker Hub 是“是否已发布”
+的事实来源，仓库只保存镜像修订覆盖表，不缓存“当前最新版”。发现器最多读取 10 页、
+每页 100 条 Release；在该范围内找不到 stable 会失败，不会用不完整数据发布。
+
 ### 3.2 推送顺序与 Docker Hub 展示顺序
 
 Docker Hub 的标签页默认按 `last_updated` 倒序，没有按版本排序的选项，因此**推送
@@ -74,11 +79,7 @@ Docker Hub 的标签页默认按 `last_updated` 倒序，没有按版本排序�
 之间发布的 beta 会浮到 `latest` 之上。**不要期待 `latest` 长期置顶**——这与版本标签
 不可变的设计直接冲突，无法通过重排解决。
 
-这意味着 GitHub Release 是版本范围和资产 digest 的事实来源，Docker Hub 是“是否已发布”
-的事实来源，仓库只保存镜像修订覆盖表，不缓存“当前最新版”。发现器最多读取 10 页、
-每页 100 条 Release；在该范围内找不到 stable 会失败，不会用不完整数据发布。
-
-### 3.2 调度语义与前提
+### 3.3 调度语义与前提
 
 - 同步 cron 为 `41 4 * * *`，即每日 `04:41 UTC` / `13:41 JST`；
 - GitHub Actions 的 scheduled workflow 只运行仓库默认分支上的版本；当前远端默认分支是
@@ -141,7 +142,7 @@ git diff --check
 真实只读 dry-run：
 
 ```bash
-bash docker-build/discover-release-window.sh taoziyoyo/xray-docker
+bash docker-build/discover-release-window.sh taoziyoyo2566/xray_docker
 ```
 
 它必须列出完整活动窗口和缺失数量，不登录 Docker Hub、不构建、不创建 tag。
@@ -222,7 +223,7 @@ bash docker-build/audit-image-tags.sh
 ```bash
 image_tag='v26.7.28-beta'
 curl --fail --silent --show-error --location \
-  "https://hub.docker.com/v2/repositories/taoziyoyo/xray-docker/tags/${image_tag}" \
+  "https://hub.docker.com/v2/repositories/taoziyoyo2566/xray_docker/tags/${image_tag}" \
   | jq '{name, digest, platforms: [.images[] | select(.os == "linux") | (.os + "/" + .architecture)]}'
 ```
 
