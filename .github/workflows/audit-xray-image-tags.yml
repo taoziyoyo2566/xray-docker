@@ -9,6 +9,10 @@ concurrency:
   group: xray-image-registry-state
   cancel-in-progress: false
 
+# 与 build-image.yml 保持同一发布目标。
+env:
+  IMAGE_NAME: taoziyoyo/xray-docker
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -26,7 +30,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          report="$(bash docker-build/audit-image-tags.sh)"
+          report="$(bash docker-build/audit-image-tags.sh "${IMAGE_NAME}")"
           printf '%s\n' "${report}"
           {
             echo '# Xray Docker Hub tag audit'

@@ -96,13 +96,13 @@ Beta tags are immutable and never receive a moving alias.
 Use `latest` when automatic stable updates are desired:
 
 ```bash
-docker pull taoziyoyo2566/xray_docker:latest
+docker pull taoziyoyo/xray-docker:latest
 ```
 
 Use an immutable version tag for controlled upgrades:
 
 ```bash
-docker pull taoziyoyo2566/xray_docker:v26.3.27-r2
+docker pull taoziyoyo/xray-docker:v26.3.27-r2
 ```
 
 For strictly reproducible deployments, pin the verified top-level image
@@ -123,4 +123,4 @@ existing version tag is never repaired by moving it to different content.
 ## Source
 
 Build workflow, Dockerfile, checksums, and release policy:
-[taoziyoyo2566/reality-ops](https://github.com/taoziyoyo2566/reality-ops).
+[taoziyoyo2566/xray-docker](https://github.com/taoziyoyo2566/xray-docker).

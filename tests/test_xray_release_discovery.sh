@@ -23,7 +23,7 @@ printf '%s\n' '{"results":[{"name":"v26.3.27","digest":"sha256:a"},{"name":"v26.
 
 RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" GITHUB_OUTPUT="${output}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
-    taoziyoyo2566/xray_docker "${revisions}" >/dev/null
+    example/test-image "${revisions}" >/dev/null
 
 grep -Fx 'stable_version=v26.3.27' "${output}" >/dev/null
 grep -Fx 'stable_tag=v26.3.27' "${output}" >/dev/null
@@ -36,7 +36,7 @@ jq -e '.include[0].image_tag == "v26.4.2-beta" and .include[0].amd64_sha == ("c"
 printf '%s\n' '{"invalid":-1}' > "${revisions}"
 if RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
-    taoziyoyo2566/xray_docker "${revisions}" >/dev/null 2>&1; then
+    example/test-image "${revisions}" >/dev/null 2>&1; then
   echo 'invalid image revisions ledger was accepted' >&2
   exit 1
 fi

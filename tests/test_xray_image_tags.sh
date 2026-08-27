@@ -24,10 +24,10 @@ MOCK
 chmod 755 "${mock_curl}"
 
 CURL_BIN="${mock_curl}" MOCK_STATUS=404 \
-  bash "${availability}" taoziyoyo2566/xray_docker v26.3.27-r1 >/dev/null
+  bash "${availability}" example/test-image v26.3.27-r1 >/dev/null
 for status in 200 500; do
   if CURL_BIN="${mock_curl}" MOCK_STATUS="${status}" \
-    bash "${availability}" taoziyoyo2566/xray_docker v26.3.27-r1 \
+    bash "${availability}" example/test-image v26.3.27-r1 \
       >/dev/null 2>&1; then
     echo "unavailable immutable tag was accepted for HTTP ${status}" >&2
     exit 1

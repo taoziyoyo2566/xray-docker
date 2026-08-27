@@ -5,7 +5,7 @@
 ## 1. 目标与边界
 
 本仓库把 XTLS/Xray-core 官方 GitHub Releases 同步为
-`taoziyoyo2566/xray_docker` 多架构镜像。活动窗口定义为：
+`taoziyoyo/xray-docker` 多架构镜像。活动窗口定义为：
 
 1. GitHub Releases API 中按发布时间从新到旧的第一个非 draft stable；
 2. 该 stable 之前所有更新的非 draft prerelease；
@@ -125,7 +125,7 @@ git diff --check
 真实只读 dry-run：
 
 ```bash
-bash docker-build/discover-release-window.sh taoziyoyo2566/xray_docker
+bash docker-build/discover-release-window.sh taoziyoyo/xray-docker
 ```
 
 它必须列出完整活动窗口和缺失数量，不登录 Docker Hub、不构建、不创建 tag。
@@ -206,7 +206,7 @@ bash docker-build/audit-image-tags.sh
 ```bash
 image_tag='v26.7.28-beta'
 curl --fail --silent --show-error --location \
-  "https://hub.docker.com/v2/repositories/taoziyoyo2566/xray_docker/tags/${image_tag}" \
+  "https://hub.docker.com/v2/repositories/taoziyoyo/xray-docker/tags/${image_tag}" \
   | jq '{name, digest, platforms: [.images[] | select(.os == "linux") | (.os + "/" + .architecture)]}'
 ```
 

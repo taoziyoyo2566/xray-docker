@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-image_name="${1:-taoziyoyo2566/xray_docker}"
+image_name="${1:-taoziyoyo/xray-docker}"
 output_file="$(mktemp /tmp/xray-tag-audit-discovery.XXXXXX)"
 trap 'rm -f -- "${output_file}"' EXIT
 

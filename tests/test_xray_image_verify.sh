@@ -41,11 +41,11 @@ if [[ "$1" == 'run' ]]; then
   done
   case "${platform}" in
     linux/amd64)
-      expected_ref='taoziyoyo2566/xray_docker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      expected_ref='example/test-image@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
       version="${MOCK_VERSION_AMD64:-26.3.27}"
       ;;
     linux/arm64)
-      expected_ref='taoziyoyo2566/xray_docker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+      expected_ref='example/test-image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
       version="${MOCK_VERSION_ARM64:-26.3.27}"
       ;;
     *) exit 2 ;;
@@ -65,7 +65,7 @@ exit 2
 MOCK
 chmod 755 "${mock_docker}"
 
-image_ref='taoziyoyo2566/xray_docker@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+image_ref='example/test-image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 github_output="${fixture_dir}/github-output"
 run_log="${fixture_dir}/run-log"
 
@@ -75,8 +75,8 @@ GITHUB_OUTPUT="${github_output}" MOCK_RUN_LOG="${run_log}" DOCKER_BIN="${mock_do
 grep -Fx "version=v26.3.27" "${github_output}" >/dev/null
 grep -Fx "platforms=linux/amd64,linux/arm64" "${github_output}" >/dev/null
 grep -Fx "image_ref=${image_ref}" "${github_output}" >/dev/null
-grep -Fx $'linux/amd64\ttaoziyoyo2566/xray_docker@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${run_log}" >/dev/null
-grep -Fx $'linux/arm64\ttaoziyoyo2566/xray_docker@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' "${run_log}" >/dev/null
+grep -Fx $'linux/amd64\texample/test-image@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${run_log}" >/dev/null
+grep -Fx $'linux/arm64\texample/test-image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' "${run_log}" >/dev/null
 
 if MOCK_MANIFEST_MODE=missing-arm64 DOCKER_BIN="${mock_docker}" \
   bash "${repo_root}/docker-build/verify-image.sh" "${image_ref}" v26.3.27 >/dev/null 2>&1; then
@@ -103,7 +103,7 @@ if MOCK_VERSION_ARM64=26.7.28 DOCKER_BIN="${mock_docker}" \
 fi
 
 if DOCKER_BIN="${mock_docker}" \
-  bash "${repo_root}/docker-build/verify-image.sh" 'taoziyoyo2566/xray_docker:latest' v26.3.27 >/dev/null 2>&1; then
+  bash "${repo_root}/docker-build/verify-image.sh" 'example/test-image:latest' v26.3.27 >/dev/null 2>&1; then
   echo 'mutable image reference was accepted' >&2
   exit 1
 fi

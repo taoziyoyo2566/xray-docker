@@ -9,6 +9,10 @@ concurrency:
   group: xray-image-registry-state
   cancel-in-progress: false
 
+# 发布目标的唯一定义处。所有 job 与脚本调用都从这里取值。
+env:
+  IMAGE_NAME: taoziyoyo/xray-docker
+
 jobs:
   discover:
     runs-on: ubuntu-latest
@@ -28,7 +32,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
-        run: bash docker-build/discover-release-window.sh taoziyoyo2566/xray_docker
+        run: bash docker-build/discover-release-window.sh "${IMAGE_NAME}"
 
       - name: Report synchronization plan
         env:
@@ -53,8 +57,6 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
-    env:
-      IMAGE_NAME: taoziyoyo2566/xray_docker
     permissions:
       contents: read
     steps:
@@ -152,7 +154,6 @@ jobs:
       (needs.build-missing.result == 'success' || needs.build-missing.result == 'skipped')
     runs-on: ubuntu-latest
     env:
-      IMAGE_NAME: taoziyoyo2566/xray_docker
       STABLE_TAG: ${{ needs.discover.outputs.stable_tag }}
       STABLE_VERSION: ${{ needs.discover.outputs.stable_version }}
     permissions:
