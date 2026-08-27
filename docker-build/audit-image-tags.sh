@@ -3,11 +3,13 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 image_name="${1:-taoziyoyo2566/xray_docker}"
+# 修订账本可覆盖，使测试能针对固定账本断言，而不受仓库当前账本内容影响。
+revisions_file="${2:-${repo_root}/docker-build/XRAY_IMAGE_REVISIONS.json}"
 output_file="$(mktemp /tmp/xray-tag-audit-discovery.XXXXXX)"
 trap 'rm -f -- "${output_file}"' EXIT
 
 GITHUB_OUTPUT="${output_file}" bash "${repo_root}/docker-build/discover-release-window.sh" \
-  "${image_name}" "${repo_root}/docker-build/XRAY_IMAGE_REVISIONS.json" >/dev/null
+  "${image_name}" "${revisions_file}" >/dev/null
 
 read_output() {
   sed -n "s/^${1}=//p" "${output_file}"

@@ -9,6 +9,8 @@ tags_json="${fixture_dir}/tags.json"
 releases_json="${fixture_dir}/releases.json"
 output_file="${fixture_dir}/output"
 github_output="${fixture_dir}/github-output"
+revisions_json="${fixture_dir}/revisions.json"
+printf '%s\n' '{}' > "${revisions_json}"
 
 jq -n '
   def asset($name; $char): {name: $name, digest: ("sha256:" + ($char * 64))};
@@ -38,7 +40,7 @@ cat > "${tags_json}" <<'JSON'
 JSON
 RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" GITHUB_OUTPUT="${github_output}" \
   bash "${repo_root}/docker-build/audit-image-tags.sh" \
-    example/test-image > "${output_file}"
+    example/test-image "${revisions_json}" > "${output_file}"
 
 grep -F $'build-deadbeef-xray-v26.3.27\tsha256:c' "${output_file}" >/dev/null
 grep -F $'1111111111111111111111111111111111111111\tsha256:d' "${output_file}" >/dev/null
@@ -58,7 +60,7 @@ JSON
 : > "${github_output}"
 RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" GITHUB_OUTPUT="${github_output}" \
   bash "${repo_root}/docker-build/audit-image-tags.sh" \
-    example/test-image > "${output_file}"
+    example/test-image "${revisions_json}" > "${output_file}"
 grep -Fx 'latest' "${output_file}" >/dev/null
 grep -Fx 'v26.3.27' "${output_file}" >/dev/null
 grep -Fx 'missing_count=2' "${github_output}" >/dev/null
