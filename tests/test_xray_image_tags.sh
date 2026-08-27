@@ -7,9 +7,22 @@ overview="${repo_root}/README.md"
 fixture_dir="$(mktemp -d /tmp/xray-image-tags-test.XXXXXX)"
 trap 'rm -rf -- "${fixture_dir}"' EXIT
 
-grep -F 'All versioned tags are immutable.' "${overview}" >/dev/null
-grep -F '`latest` is the only moving tag.' "${overview}" >/dev/null
-grep -F '`vX.Y.Z-beta-rN`' "${overview}" >/dev/null
+# Overview 是使用者看到的标签契约。断言标签标识符本身而不是措辞：
+# 前者是契约的一部分，后者只是行文，改写文档不应弄坏测试。
+for form in '`latest`' '`vX.Y.Z`' '`vX.Y.Z-beta`' '`vX.Y.Z-rN`' '`vX.Y.Z-beta-rN`'; do
+  if ! grep -qF "${form}" "${overview}"; then
+    echo "overview no longer documents the ${form} tag form" >&2
+    exit 1
+  fi
+done
+if ! grep -qF 'The only tag that moves' "${overview}"; then
+  echo 'overview no longer states that latest is the sole moving tag' >&2
+  exit 1
+fi
+if ! grep -qF 'never moved to different content' "${overview}"; then
+  echo 'overview no longer states that version tags are immutable' >&2
+  exit 1
+fi
 
 mock_curl="${fixture_dir}/curl"
 cat > "${mock_curl}" <<'MOCK'
