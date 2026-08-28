@@ -10,6 +10,9 @@ if [[ ! "${image_name}" =~ ^[a-z0-9._-]+/[a-z0-9._-]+$ ]]; then
   exit 1
 fi
 
+# Retry transient failures while leaving deterministic HTTP errors fail-closed.
+curl_opts=(--retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60)
+
 # 决定镜像内容的那些文件的指纹。已发布的标签把它记在 label 里，
 # 比对不上就说明该标签是用旧的镜像定义构建的，需要重建。
 build_inputs="$(bash "${repo_root}/docker-build/build-fingerprint.sh")"
@@ -24,7 +27,7 @@ else
     github_auth=(-H "Authorization: Bearer ${GH_TOKEN}")
   fi
   while true; do
-    page_json="$("${curl_bin}" --fail --silent --show-error --location \
+    page_json="$("${curl_bin}" --fail --silent --show-error --location "${curl_opts[@]}" \
       -H 'Accept: application/vnd.github+json' \
       "${github_auth[@]}" \
       -H 'X-GitHub-Api-Version: 2026-03-10' \
@@ -79,7 +82,7 @@ else
   next_url="https://hub.docker.com/v2/repositories/${image_name}/tags?page_size=100"
   first_page=1
   while [[ -n "${next_url}" ]]; do
-    response="$("${curl_bin}" --silent --show-error --location \
+    response="$("${curl_bin}" --silent --show-error --location "${curl_opts[@]}" \
       --write-out $'\n%{http_code}' "${next_url}")"
     status="${response##*$'\n'}"
     page_json="${response%$'\n'*}"
@@ -107,19 +110,25 @@ fi
 
 registry_names="$(jq -c '[.results[].name]' <<< "${tags_json}")"
 
-# 读取已发布标签记录的构建指纹。返回 {tag: fingerprint} 映射；
-# 标签不存在或未记录该 label 时该键缺失，视为需要重建。
-# 测试通过 PUBLISHED_INPUTS_FILE 直接提供该映射，绕过 registry。
-read_published_inputs() {
-  if [[ -n "${PUBLISHED_INPUTS_FILE:-}" ]]; then
-    cat "${PUBLISHED_INPUTS_FILE}"
+# Return {tag: {inputs, amd64, arm64}} from image labels or a test fixture.
+read_published_state() {
+  if [[ -n "${PUBLISHED_STATE_FILE:-}" ]]; then
+    cat "${PUBLISHED_STATE_FILE}"
     return
   fi
 
   local accept_index='application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json'
   local accept_manifest='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
-  local token
-  token="$("${curl_bin}" --fail --silent --show-error --location \
+  # Optional read-only credentials use the account quota instead of runner IP quota.
+  local token registry_auth=()
+  if [[ -n "${DOCKERHUB_USERNAME:-}" && -n "${DOCKERHUB_RO_TOKEN:-}" ]]; then
+    registry_auth=(--user "${DOCKERHUB_USERNAME}:${DOCKERHUB_RO_TOKEN}")
+    echo "Reading published image state as ${DOCKERHUB_USERNAME}" >&2
+  else
+    echo 'Reading published image state anonymously; set DOCKERHUB_USERNAME and DOCKERHUB_RO_TOKEN to use the account quota' >&2
+  fi
+  token="$("${curl_bin}" --fail --silent --show-error --location "${curl_opts[@]}" \
+    "${registry_auth[@]}" \
     "https://auth.docker.io/token?service=registry.docker.io&scope=repository:${image_name}:pull" \
     | jq -r '.token')"
   if [[ -z "${token}" || "${token}" == "null" ]]; then
@@ -127,11 +136,11 @@ read_published_inputs() {
     exit 1
   fi
 
-  local out='{}' tag index child manifest config value
+  local out='{}' tag index child manifest config blob value
   while IFS= read -r tag; do
     jq -e --arg t "${tag}" '.results | any(.name == $t)' <<< "${tags_json}" >/dev/null || continue
 
-    index="$("${curl_bin}" --silent --show-error --location \
+    index="$("${curl_bin}" --silent --show-error --location "${curl_opts[@]}" \
       -H "Authorization: Bearer ${token}" -H "Accept: ${accept_index},${accept_manifest}" \
       "https://registry-1.docker.io/v2/${image_name}/manifests/${tag}")"
     child="$(jq -r '[.manifests[]? | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest] | first // empty' <<< "${index}")"
@@ -140,7 +149,7 @@ read_published_inputs() {
       exit 1
     fi
 
-    manifest="$("${curl_bin}" --silent --show-error --location \
+    manifest="$("${curl_bin}" --silent --show-error --location "${curl_opts[@]}" \
       -H "Authorization: Bearer ${token}" -H "Accept: ${accept_manifest}" \
       "https://registry-1.docker.io/v2/${image_name}/manifests/${child}")"
     config="$(jq -r '.config.digest // empty' <<< "${manifest}")"
@@ -149,27 +158,38 @@ read_published_inputs() {
       exit 1
     fi
 
-    # blob 请求会被重定向到 CDN，必须跟随重定向。
-    value="$("${curl_bin}" --silent --show-error --location \
+    # --fail distinguishes an absent label from an HTTP error response.
+    if ! blob="$("${curl_bin}" --fail --silent --show-error --location "${curl_opts[@]}" \
       -H "Authorization: Bearer ${token}" \
-      "https://registry-1.docker.io/v2/${image_name}/blobs/${config}" \
-      | jq -r '.config.Labels["io.taoziyoyo.xray.build-inputs"] // empty')"
-    out="$(jq -c --arg t "${tag}" --arg v "${value}" '.[$t] = $v' <<< "${out}")"
+      "https://registry-1.docker.io/v2/${image_name}/blobs/${config}")"; then
+      echo "could not read the image config blob for ${image_name}:${tag}" >&2
+      exit 1
+    fi
+    value="$(jq -c '.config.Labels // {} | {
+        inputs: (.["io.taoziyoyo.xray.build-inputs"] // ""),
+        amd64:  (.["io.taoziyoyo.xray.asset-sha256-amd64"] // ""),
+        arm64:  (.["io.taoziyoyo.xray.asset-sha256-arm64"] // "")
+      }' <<< "${blob}")"
+    out="$(jq -c --arg t "${tag}" --argjson v "${value}" '.[$t] = $v' <<< "${out}")"
   done < <(jq -r '.[].image_tag' <<< "${window_json}")
 
   printf '%s' "${out}"
 }
 
-published_inputs="$(read_published_inputs)"
+published_state="$(read_published_state)"
 # Docker Hub 的 tag 页默认按 last_updated 倒序，因此推送顺序决定展示顺序。
 # 输入为 GitHub 的新→旧顺序；先 reverse 再按 published_at 稳定排序，
 # 使同一秒发布的 release 也保持旧→新（jq 的 sort_by 是稳定排序）。
 # 最后把唯一的 stable 排到末位，令其成为最后推送、在页面上位于 beta 之上的一个。
 missing_json="$(jq -c --argjson names "${registry_names}" \
-  --argjson published "${published_inputs}" --arg inputs "${build_inputs}" '
-  [.[] | select(.image_tag as $tag
-      | ($names | index($tag) | not)              # 标签尚不存在
-        or (($published[$tag] // "") != $inputs)) # 或由旧的镜像定义构建
+  --argjson published "${published_state}" --arg inputs "${build_inputs}" '
+  [.[] | select(
+      . as $release
+      | ($names | index($release.image_tag) | not)          # 标签尚不存在
+        or (($published[$release.image_tag] // {}) as $pub
+            | (($pub.inputs // "") != $inputs)               # 由旧的镜像定义构建
+              or (($pub.amd64 // "") != $release.amd64_sha)  # 上游资产已被替换
+              or (($pub.arm64 // "") != $release.arm64_sha)))
   ]
   | reverse
   | sort_by(.published_at)

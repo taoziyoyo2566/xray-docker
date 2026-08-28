@@ -8,8 +8,29 @@ releases="${fixture_dir}/releases.json"
 tags="${fixture_dir}/tags.json"
 published="${fixture_dir}/published.json"
 output="${fixture_dir}/output"
-# 已发布标签记录的构建指纹；与当前指纹不一致或缺失即重建。
-fingerprint="$(bash "${repo_root}/docker-build/build-fingerprint.sh")"
+
+fingerprint_dir="${fixture_dir}/build-inputs"
+mkdir "${fingerprint_dir}"
+cp "${repo_root}"/docker-build/{dockerfile,entrypoint.sh,NOTICE,.dockerignore,GPL-3.0.txt,index-annotations.sh} \
+  "${fingerprint_dir}/"
+fingerprint="$(bash "${repo_root}/docker-build/build-fingerprint.sh" "${fingerprint_dir}")"
+
+# These files alter the published artifact and must change its fingerprint.
+for required in index-annotations.sh GPL-3.0.txt; do
+  printf '\nfingerprint probe\n' >> "${fingerprint_dir}/${required}"
+  if [[ "$(bash "${repo_root}/docker-build/build-fingerprint.sh" "${fingerprint_dir}")" == "${fingerprint}" ]]; then
+    echo "${required} does not affect the build fingerprint" >&2
+    exit 1
+  fi
+  cp "${repo_root}/docker-build/${required}" "${fingerprint_dir}/${required}"
+done
+
+# Build a published-state fixture; an empty character represents a missing label.
+pub_entry() {
+  jq -n --arg i "$1" --arg c "$2" \
+    '{inputs: $i, amd64: (if $c == "" then "" else ($c * 64) end),
+      arm64: (if $c == "" then "" else ($c * 64) end)}'
+}
 
 jq -n '
   def asset($name; $char): {name: $name, digest: ("sha256:" + ($char * 64))};
@@ -21,9 +42,10 @@ jq -n '
    release("v26.3.27"; false; "a"), release("v26.3.23"; true; "d")]
 ' > "${releases}"
 printf '%s\n' '{"results":[{"name":"v26.3.27","digest":"sha256:a"},{"name":"v26.4.1-beta","digest":"sha256:b"}]}' > "${tags}"
-jq -n --arg f "${fingerprint}" '{"v26.3.27": $f, "v26.4.1-beta": $f}' > "${published}"
+jq -n --argjson a "$(pub_entry "${fingerprint}" a)" --argjson b "$(pub_entry "${fingerprint}" b)" \
+  '{"v26.3.27": $a, "v26.4.1-beta": $b}' > "${published}"
 
-RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_INPUTS_FILE="${published}" GITHUB_OUTPUT="${output}" \
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
     example/test-image >/dev/null
 
@@ -52,7 +74,7 @@ printf '%s\n' '{"results":[]}' > "${tags}"
 : > "${output}"
 
 printf '%s\n' '{}' > "${published}"
-RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_INPUTS_FILE="${published}" GITHUB_OUTPUT="${output}" \
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
     example/test-image >/dev/null
 
@@ -77,7 +99,7 @@ chmod 755 "${mock_curl}"
 
 : > "${output}"
 printf '%s\n' '{}' > "${published}"
-RELEASES_JSON_FILE="${releases}" CURL_BIN="${mock_curl}" MOCK_STATUS=404 PUBLISHED_INPUTS_FILE="${published}" GITHUB_OUTPUT="${output}" \
+RELEASES_JSON_FILE="${releases}" CURL_BIN="${mock_curl}" MOCK_STATUS=404 PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
     example/test-image >/dev/null 2>&1
 
@@ -88,7 +110,7 @@ if ! grep -Fx 'missing_count=4' "${output}" >/dev/null; then
 fi
 
 # 其他 HTTP 错误必须仍然失败，不能被一并吞掉。
-if RELEASES_JSON_FILE="${releases}" CURL_BIN="${mock_curl}" MOCK_STATUS=500 PUBLISHED_INPUTS_FILE="${published}" \
+if RELEASES_JSON_FILE="${releases}" CURL_BIN="${mock_curl}" MOCK_STATUS=500 PUBLISHED_STATE_FILE="${published}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
     example/test-image >/dev/null 2>&1; then
   echo 'a Docker Hub server error was accepted as an empty tag set' >&2
@@ -98,9 +120,13 @@ fi
 # 镜像定义变化后，已存在的标签必须被重建，否则修复到不了使用者手里。
 # 该 fixture 的窗口是 v26.5.1/5.2/5.3-beta 加 stable v26.4.9，全部已发布。
 printf '%s\n' '{"results":[{"name":"v26.5.1-beta","digest":"sha256:a"},{"name":"v26.5.2-beta","digest":"sha256:b"},{"name":"v26.5.3-beta","digest":"sha256:c"},{"name":"v26.4.9","digest":"sha256:d"}]}' > "${tags}"
-jq -n --arg f "${fingerprint}" '{"v26.5.1-beta": $f, "v26.5.2-beta": "stale0000", "v26.5.3-beta": $f, "v26.4.9": $f}' > "${published}"
+jq -n --argjson p3 "$(pub_entry "${fingerprint}" 3)" \
+      --argjson p2 "$(pub_entry stale0000 2)" \
+      --argjson p1 "$(pub_entry "${fingerprint}" 1)" \
+      --argjson p4 "$(pub_entry "${fingerprint}" 4)" \
+  '{"v26.5.1-beta": $p3, "v26.5.2-beta": $p2, "v26.5.3-beta": $p1, "v26.4.9": $p4}' > "${published}"
 : > "${output}"
-RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_INPUTS_FILE="${published}" GITHUB_OUTPUT="${output}" \
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
   bash "${repo_root}/docker-build/discover-release-window.sh" \
     example/test-image >/dev/null
 
@@ -110,6 +136,61 @@ if ! grep -Fx 'missing_count=1' "${output}" >/dev/null; then
 fi
 if ! jq -e '.include[0].image_tag == "v26.5.2-beta"' <<< "$(sed -n 's/^matrix=//p' "${output}")" >/dev/null; then
   echo 'the wrong tag was scheduled for rebuild' >&2
+  exit 1
+fi
+
+# A converged release window must remain idle.
+jq -n --argjson p3 "$(pub_entry "${fingerprint}" 3)" \
+      --argjson p2 "$(pub_entry "${fingerprint}" 2)" \
+      --argjson p1 "$(pub_entry "${fingerprint}" 1)" \
+      --argjson p4 "$(pub_entry "${fingerprint}" 4)" \
+  '{"v26.5.1-beta": $p3, "v26.5.2-beta": $p2, "v26.5.3-beta": $p1, "v26.4.9": $p4}' > "${published}"
+: > "${output}"
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
+  bash "${repo_root}/docker-build/discover-release-window.sh" \
+    example/test-image >/dev/null
+
+if ! grep -Fx 'missing_count=0' "${output}" >/dev/null; then
+  echo 'a fully converged window was scheduled for rebuild anyway' >&2
+  sed -n 's/^missing_count=/  actual missing_count=/p' "${output}" >&2
+  exit 1
+fi
+
+# A changed upstream asset digest must rebuild the affected tag.
+jq -n --argjson drift "$(pub_entry "${fingerprint}" 9)" \
+      --argjson p2 "$(pub_entry "${fingerprint}" 2)" \
+      --argjson p1 "$(pub_entry "${fingerprint}" 1)" \
+      --argjson p4 "$(pub_entry "${fingerprint}" 4)" \
+  '{"v26.5.1-beta": $drift, "v26.5.2-beta": $p2, "v26.5.3-beta": $p1, "v26.4.9": $p4}' > "${published}"
+: > "${output}"
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
+  bash "${repo_root}/docker-build/discover-release-window.sh" \
+    example/test-image >/dev/null
+
+if ! grep -Fx 'missing_count=1' "${output}" >/dev/null; then
+  echo 'a replaced upstream asset digest did not schedule a rebuild' >&2
+  sed -n 's/^missing_count=/  actual missing_count=/p' "${output}" >&2
+  exit 1
+fi
+if ! jq -e '.include[0].image_tag == "v26.5.1-beta"' <<< "$(sed -n 's/^matrix=//p' "${output}")" >/dev/null; then
+  echo 'asset drift scheduled the wrong tag for rebuild' >&2
+  exit 1
+fi
+
+# Legacy tags without asset labels need one convergence rebuild.
+jq -n --argjson legacy "$(pub_entry "${fingerprint}" "")" \
+      --argjson p2 "$(pub_entry "${fingerprint}" 2)" \
+      --argjson p1 "$(pub_entry "${fingerprint}" 1)" \
+      --argjson p3 "$(pub_entry "${fingerprint}" 3)" \
+  '{"v26.5.1-beta": $p3, "v26.5.2-beta": $p2, "v26.5.3-beta": $p1, "v26.4.9": $legacy}' > "${published}"
+: > "${output}"
+RELEASES_JSON_FILE="${releases}" TAG_JSON_FILE="${tags}" PUBLISHED_STATE_FILE="${published}" GITHUB_OUTPUT="${output}" \
+  bash "${repo_root}/docker-build/discover-release-window.sh" \
+    example/test-image >/dev/null
+
+if ! jq -e '.include | length == 1 and .[0].image_tag == "v26.4.9"' \
+  <<< "$(sed -n 's/^matrix=//p' "${output}")" >/dev/null; then
+  echo 'a tag published without the asset-sha256 labels was not scheduled for rebuild' >&2
   exit 1
 fi
 

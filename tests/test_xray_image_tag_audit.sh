@@ -38,7 +38,7 @@ cat > "${tags_json}" <<'JSON'
   {"name":"unexpected","digest":"sha256:f"}
 ]}
 JSON
-RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" PUBLISHED_INPUTS_FILE="${published_json}" GITHUB_OUTPUT="${github_output}" \
+RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" PUBLISHED_STATE_FILE="${published_json}" GITHUB_OUTPUT="${github_output}" \
   bash "${repo_root}/docker-build/audit-image-tags.sh" \
     example/test-image > "${output_file}"
 
@@ -50,6 +50,8 @@ grep -Fx 'retain_count=4' "${github_output}" >/dev/null
 grep -Fx 'cleanup_count=3' "${github_output}" >/dev/null
 grep -Fx 'review_count=6' "${github_output}" >/dev/null
 grep -Fx 'missing_count=0' "${github_output}" >/dev/null
+# latest 与 stable 版本标签同 digest：runbook §8 的验收条件之一。
+grep -Fx 'latest_matches_stable=true' "${github_output}" >/dev/null
 
 cat > "${tags_json}" <<'JSON'
 {"results":[
@@ -58,11 +60,30 @@ cat > "${tags_json}" <<'JSON'
 ]}
 JSON
 : > "${github_output}"
-RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" PUBLISHED_INPUTS_FILE="${published_json}" GITHUB_OUTPUT="${github_output}" \
+RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" PUBLISHED_STATE_FILE="${published_json}" GITHUB_OUTPUT="${github_output}" \
   bash "${repo_root}/docker-build/audit-image-tags.sh" \
     example/test-image > "${output_file}"
 grep -Fx 'latest' "${output_file}" >/dev/null
 grep -Fx 'v26.3.27' "${output_file}" >/dev/null
 grep -Fx 'missing_count=2' "${github_output}" >/dev/null
+# 两个标签都不在时无从比较，必须报 unknown 而不是 false——缺标签由 missing_count 负责，
+# 让它同时触发第二条错误只会掩盖真正的原因。
+grep -Fx 'latest_matches_stable=unknown' "${github_output}" >/dev/null
+
+# latest 指向的不是当前 stable：标签齐全，其它检查全绿，只有这一条能发现。
+cat > "${tags_json}" <<'JSON'
+{"results":[
+  {"name":"latest","digest":"sha256:stale"},
+  {"name":"v26.3.27","digest":"sha256:a"},
+  {"name":"v26.7.28-beta","digest":"sha256:g"}
+]}
+JSON
+: > "${github_output}"
+RELEASES_JSON_FILE="${releases_json}" TAG_JSON_FILE="${tags_json}" PUBLISHED_STATE_FILE="${published_json}" GITHUB_OUTPUT="${github_output}" \
+  bash "${repo_root}/docker-build/audit-image-tags.sh" \
+    example/test-image > "${output_file}"
+grep -Fx 'missing_count=0' "${github_output}" >/dev/null
+grep -Fx 'latest_matches_stable=false' "${github_output}" >/dev/null
+grep -F 'MISMATCH' "${output_file}" >/dev/null
 
 echo 'Xray image tag audit tests passed'

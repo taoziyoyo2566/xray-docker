@@ -59,6 +59,17 @@ while IFS=$'\t' read -r platform manifest_digest; do
     exit 1
   fi
   verified_version="${actual_version}"
+
+  # Exercise the image entrypoint as well as the overridden version command.
+  if entrypoint_out="$("${docker_bin}" run --rm \
+    --platform "${platform}" "${platform_ref}" 2>&1)"; then
+    echo "${platform}: the entrypoint started without any configuration" >&2
+    exit 1
+  fi
+  if ! grep -qF 'no configuration found' <<< "${entrypoint_out}"; then
+    echo "${platform}: unexpected entrypoint output: ${entrypoint_out}" >&2
+    exit 1
+  fi
 done <<< "${manifest_rows}"
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then

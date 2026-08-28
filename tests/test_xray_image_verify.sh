@@ -32,9 +32,11 @@ fi
 if [[ "$1" == 'run' ]]; then
   platform=''
   run_ref=''
+  entrypoint=''
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --platform) platform="$2"; shift ;;
+      --entrypoint) entrypoint="$2"; shift ;;
       *@sha256:*) run_ref="$1" ;;
     esac
     shift
@@ -54,6 +56,14 @@ if [[ "$1" == 'run' ]]; then
     echo "docker: cannot overwrite digest ${run_ref##*@}" >&2
     exit 125
   fi
+  # No override exercises the image's own entrypoint.
+  if [[ -z "${entrypoint}" ]]; then
+    if [[ -n "${MOCK_ENTRYPOINT_LOG:-}" ]]; then
+      printf '%s\t%s\n' "${platform}" "${run_ref}" >> "${MOCK_ENTRYPOINT_LOG}"
+    fi
+    printf '%s\n' "${MOCK_ENTRYPOINT_OUT:-no configuration found: expected /config.json or JSON files in /etc/xray/conf.d}" >&2
+    exit "${MOCK_ENTRYPOINT_EXIT:-1}"
+  fi
   if [[ -n "${MOCK_RUN_LOG:-}" ]]; then
     printf '%s\t%s\n' "${platform}" "${run_ref}" >> "${MOCK_RUN_LOG}"
   fi
@@ -68,8 +78,10 @@ chmod 755 "${mock_docker}"
 image_ref='example/test-image@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 github_output="${fixture_dir}/github-output"
 run_log="${fixture_dir}/run-log"
+entrypoint_log="${fixture_dir}/entrypoint-log"
 
-GITHUB_OUTPUT="${github_output}" MOCK_RUN_LOG="${run_log}" DOCKER_BIN="${mock_docker}" \
+GITHUB_OUTPUT="${github_output}" MOCK_RUN_LOG="${run_log}" \
+  MOCK_ENTRYPOINT_LOG="${entrypoint_log}" DOCKER_BIN="${mock_docker}" \
   bash "${repo_root}/docker-build/verify-image.sh" "${image_ref}" v26.3.27
 
 grep -Fx "version=v26.3.27" "${github_output}" >/dev/null
@@ -77,6 +89,14 @@ grep -Fx "platforms=linux/amd64,linux/arm64" "${github_output}" >/dev/null
 grep -Fx "image_ref=${image_ref}" "${github_output}" >/dev/null
 grep -Fx $'linux/amd64\texample/test-image@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${run_log}" >/dev/null
 grep -Fx $'linux/arm64\texample/test-image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' "${run_log}" >/dev/null
+
+if [[ "$(wc -l < "${entrypoint_log}")" -ne 2 ]]; then
+  echo 'the real entrypoint was not exercised on both platforms' >&2
+  cat "${entrypoint_log}" >&2
+  exit 1
+fi
+grep -Fx $'linux/amd64\texample/test-image@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' "${entrypoint_log}" >/dev/null
+grep -Fx $'linux/arm64\texample/test-image@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' "${entrypoint_log}" >/dev/null
 
 if MOCK_MANIFEST_MODE=missing-arm64 DOCKER_BIN="${mock_docker}" \
   bash "${repo_root}/docker-build/verify-image.sh" "${image_ref}" v26.3.27 >/dev/null 2>&1; then
@@ -105,6 +125,18 @@ fi
 if DOCKER_BIN="${mock_docker}" \
   bash "${repo_root}/docker-build/verify-image.sh" 'example/test-image:latest' v26.3.27 >/dev/null 2>&1; then
   echo 'mutable image reference was accepted' >&2
+  exit 1
+fi
+
+if MOCK_ENTRYPOINT_EXIT=0 DOCKER_BIN="${mock_docker}" \
+  bash "${repo_root}/docker-build/verify-image.sh" "${image_ref}" v26.3.27 >/dev/null 2>&1; then
+  echo 'an entrypoint that starts without configuration was accepted' >&2
+  exit 1
+fi
+
+if MOCK_ENTRYPOINT_OUT='exec: /entrypoint.sh: not found' DOCKER_BIN="${mock_docker}" \
+  bash "${repo_root}/docker-build/verify-image.sh" "${image_ref}" v26.3.27 >/dev/null 2>&1; then
+  echo 'a broken entrypoint that failed for the wrong reason was accepted' >&2
   exit 1
 fi
 

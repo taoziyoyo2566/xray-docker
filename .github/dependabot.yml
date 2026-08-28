@@ -6,3 +6,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+
+  # Advance the digest-pinned Alpine base image through reviewed PRs.
+  - package-ecosystem: docker
+    directory: /docker-build
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5

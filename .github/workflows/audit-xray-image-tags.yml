@@ -8,6 +8,7 @@ on:
 concurrency:
   group: xray-image-registry-state
   cancel-in-progress: false
+  queue: max
 
 # 与 build-image.yml 保持同一发布目标。
 env:
@@ -16,6 +17,7 @@ env:
 jobs:
   audit:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -27,6 +29,9 @@ jobs:
         id: audit
         env:
           GH_TOKEN: ${{ github.token }}
+          # Optional read-only auth avoids the shared runner's anonymous quota.
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_RO_TOKEN: ${{ secrets.DOCKERHUB_RO_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
@@ -60,4 +65,15 @@ jobs:
         shell: bash
         run: |
           echo "::error::Docker Hub is missing ${MISSING_COUNT} required tag(s)"
+          exit 1
+
+      # runbook §8 的验收条件之一。标签齐全但 latest 指向旧镜像，是这套发布里
+      # 最直接的用户可见故障，而它不会让任何其它检查变红。
+      # 'unknown' 不在此失败：那说明有标签缺失，上一步已经报错。
+      - name: Fail when latest does not point at the current stable image
+        if: steps.audit.outputs.latest_matches_stable == 'false'
+        shell: bash
+        run: |
+          echo '::error::latest does not resolve to the current stable version tag'
+          echo 'See the "latest alignment" section of the audit summary for both digests.'
           exit 1

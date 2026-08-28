@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
 
-# 单文件配置（历史默认，挂载 /config.json 的部署继续可用）
+# Preserve the historical single-file default.
 config_file="${XRAY_CONFIG:-/config.json}"
-# 多片段配置目录。注意 Xray 的合并语义：inbounds/outbounds 数组会追加，
-# 但 routing/dns/policy 这类对象会被后读入的文件整体替换，
-# 因此每个这类对象只能出现在唯一一个片段中。
+# Xray prepends merged outbounds unless a filename contains "tail"; the first
+# outbound is the default. Inspect changes with `xray run -confdir DIR -dump`.
+# https://xtls.github.io/en/config/features/multiple.html
 config_dir="${XRAY_CONFDIR:-/etc/xray/conf.d}"
 
 main() {
@@ -18,8 +18,7 @@ main() {
         exit 1
     fi
 
-    # 先校验再启动。容器通常配 restart: always，坏配置若直接 exec 会变成静默重启循环，
-    # 真正的错误信息淹没在反复的启动日志里。
+    # Reject invalid configuration before a restart policy can hide the cause.
     if ! xray "$@" -test; then
         echo "configuration failed validation; refusing to start" >&2
         exit 1

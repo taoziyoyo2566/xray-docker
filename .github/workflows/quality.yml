@@ -12,6 +12,7 @@ permissions:
 jobs:
   xray-image-inputs:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout codebase
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -22,11 +23,183 @@ jobs:
           bash -n docker-build/discover-release-window.sh
           bash -n docker-build/audit-image-tags.sh
           bash -n docker-build/verify-image.sh
+          bash -n docker-build/smoke-image.sh
+          bash -n docker-build/index-annotations.sh
           for t in tests/*.sh; do bash -n "$t"; done
           for t in tests/*.sh; do bash "$t"; done
 
+  # Version and checksum pins keep runner image updates from changing lint results.
+  static-analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      SHELLCHECK_VERSION: v0.11.0
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+      ACTIONLINT_VERSION: 1.7.12
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+      HADOLINT_VERSION: v2.15.1
+      HADOLINT_SHA256: c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned linters
+        shell: bash
+        run: |
+          set -euo pipefail
+          lint_dir="${RUNNER_TEMP}/lint"
+          mkdir -p "${lint_dir}"
+          cd "${lint_dir}"
+
+          fetch() {
+            curl --fail --silent --show-error --location \
+              --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 120 \
+              -o "$3" "$1"
+            printf '%s  %s\n' "$2" "$3" | sha256sum -c -
+          }
+
+          fetch "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            "${SHELLCHECK_SHA256}" shellcheck.tar.xz
+          tar -xJf shellcheck.tar.xz
+          mv "shellcheck-${SHELLCHECK_VERSION}/shellcheck" .
+
+          fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            "${ACTIONLINT_SHA256}" actionlint.tar.gz
+          tar -xzf actionlint.tar.gz actionlint
+
+          fetch "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64" \
+            "${HADOLINT_SHA256}" hadolint
+
+          chmod +x shellcheck actionlint hadolint
+          echo "${lint_dir}" >> "${GITHUB_PATH}"
+
+      - name: Report linter versions
+        shell: bash
+        run: |
+          shellcheck --version | sed -n '2p'
+          actionlint --version | sed -n '1p'
+          hadolint --version
+
+      - name: shellcheck
+        shell: bash
+        run: shellcheck -x docker-build/*.sh tests/*.sh
+
+      # actionlint 1.7.12 predates GitHub's concurrency.queue key.
+      - name: actionlint
+        shell: bash
+        run: |
+          actionlint -no-color -shellcheck "$(command -v shellcheck)" \
+            -ignore 'unexpected key "queue" for "concurrency" section'
+
+      - name: hadolint
+        shell: bash
+        run: hadolint docker-build/dockerfile
+
+  image-build-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the newest upstream stable release
+        id: upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          release="$(curl --fail --silent --show-error --location \
+            --retry 3 --retry-delay 2 --connect-timeout 10 --max-time 60 \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            'https://api.github.com/repos/XTLS/Xray-core/releases?per_page=100' \
+            | jq -ce '
+                map(select(.draft == false and .prerelease == false)) | first
+                | if . == null then error("no non-draft stable release found") else . end
+                | {
+                    version: .tag_name,
+                    amd64: ([.assets[]? | select(.name == "Xray-linux-64.zip") | .digest] | first),
+                    arm64: ([.assets[]? | select(.name == "Xray-linux-arm64-v8a.zip") | .digest] | first)
+                  }
+                | if (.version | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$") | not)
+                    then error("invalid release tag: " + (.version | tostring))
+                  elif ((.amd64 // "") | test("^sha256:[0-9a-f]{64}$") | not)
+                    then error("invalid amd64 digest")
+                  elif ((.arm64 // "") | test("^sha256:[0-9a-f]{64}$") | not)
+                    then error("invalid arm64 digest")
+                  else . end')"
+          {
+            echo "version=$(jq -r .version <<< "${release}")"
+            echo "amd64=$(jq -r '.amd64 | sub("^sha256:"; "")' <<< "${release}")"
+            echo "arm64=$(jq -r '.arm64 | sub("^sha256:"; "")' <<< "${release}")"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+
+      - name: Build the image for the runner architecture
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./docker-build
+          file: ./docker-build/dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: xray-image:pr-smoke
+          build-args: |
+            XRAY_VERSION=${{ steps.upstream.outputs.version }}
+            XRAY_SHA256_AMD64=${{ steps.upstream.outputs.amd64 }}
+            XRAY_SHA256_ARM64=${{ steps.upstream.outputs.arm64 }}
+          # The Docker exporter used by load does not support attestations.
+          provenance: false
+          sbom: false
+
+      - name: Smoke test the built image
+        env:
+          VERSION: ${{ steps.upstream.outputs.version }}
+        shell: bash
+        run: bash docker-build/smoke-image.sh xray-image:pr-smoke "${VERSION}"
+
+      - name: Report known vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: xray-image:pr-smoke
+          format: table
+          severity: CRITICAL,HIGH,MEDIUM
+          ignore-unfixed: false
+          exit-code: '0'
+          output: trivy-report.txt
+
+      - name: Publish the vulnerability report
+        shell: bash
+        run: |
+          {
+            echo '## Image vulnerability report'
+            echo
+            echo '```text'
+            cat trivy-report.txt
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      # Gate only on critical findings with an available upstream fix.
+      - name: Fail on fixable critical vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: xray-image:pr-smoke
+          format: table
+          severity: CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+
   whitespace:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout codebase
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
