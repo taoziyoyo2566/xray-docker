@@ -15,6 +15,7 @@ read_output() {
 expected_tags="$(read_output expected_tags)"
 prerelease_versions="$(read_output prerelease_versions)"
 registry_tags="$(read_output registry_tags)"
+stable_tag="$(read_output stable_tag)"
 
 declare -A expected=()
 while IFS= read -r tag; do
@@ -52,9 +53,10 @@ for tag in "${!expected[@]}"; do
     missing+=("${tag}")
   fi
 done
-IFS=$'\n' missing=($(sort <<< "${missing[*]:-}"))
-unset IFS
-[[ "${#missing[@]}" -eq 1 && -z "${missing[0]}" ]] && missing=()
+# Avoid turning an empty array into one empty element through printf.
+if [[ "${#missing[@]}" -gt 0 ]]; then
+  mapfile -t missing < <(printf '%s\n' "${missing[@]}" | sort)
+fi
 
 print_group() {
   local title="$1"
@@ -63,6 +65,35 @@ print_group() {
   if [[ "$#" -eq 0 ]]; then echo '(none)'; else printf '%s\n' "$@"; fi
   echo
 }
+
+# runbook §8 把「stable 版本标签与 latest 顶层 digest 相同」列为验收必须满足项，
+# 而在此之前审计从不检查它：只要两个标签都存在，指向哪里都算通过。
+# latest 指错镜像是这套发布里最直接的用户可见故障，必须由每周审计兜住。
+tag_digest() {
+  jq -r --arg t "$1" 'map(select(.name == $t)) | first | .digest // empty' \
+    <<< "${registry_tags}"
+}
+latest_digest="$(tag_digest latest)"
+stable_digest="$(tag_digest "${stable_tag}")"
+digest_match='unknown'
+if [[ -n "${latest_digest}" && -n "${stable_digest}" ]]; then
+  if [[ "${latest_digest}" == "${stable_digest}" ]]; then
+    digest_match='true'
+  else
+    digest_match='false'
+  fi
+fi
+
+echo "## latest alignment"
+echo "stable tag:    ${stable_tag:-(unknown)}"
+echo "stable digest: ${stable_digest:-(absent)}"
+echo "latest digest: ${latest_digest:-(absent)}"
+case "${digest_match}" in
+  true)  echo 'latest points at the current stable image.' ;;
+  false) echo 'MISMATCH: latest does not point at the current stable image.' ;;
+  *)     echo 'Not comparable: one of the two tags is absent (see missing tags below).' ;;
+esac
+echo
 
 print_group 'Retain' "${kept[@]}"
 print_group 'Cleanup candidates' "${cleanup[@]}"
@@ -75,5 +106,6 @@ if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
     echo "cleanup_count=${#cleanup[@]}"
     echo "review_count=${#review[@]}"
     echo "missing_count=${#missing[@]}"
+    echo "latest_matches_stable=${digest_match}"
   } >> "${GITHUB_OUTPUT}"
 fi

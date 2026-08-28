@@ -1,0 +1,79 @@
+name: Sync Docker Hub Overview
+
+# 刻意与镜像发布分开。此前它挂在 build-image.yml 的 reconcile-latest 之后，每天
+# 都跑，有两个问题：
+#   1. Overview 同步失败会让一次**已经成功发布**的 run 显示为部分失败；
+#   2. peter-evans/dockerhub-description 的 README 要求 PAT 具备
+#      read/write/delete scope，而发布令牌只需要 write。把两者绑在一起，要么
+#      Overview 步骤失败，要么日常发布令牌被迫获得删除镜像的能力。
+# 拆开之后：独立触发条件、独立失败域、独立 secret。
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - README.md
+      - .github/workflows/sync-dockerhub-overview.yml
+  workflow_dispatch:
+
+concurrency:
+  # 不与发布共用 group：它不读写 registry 的标签状态，没有串行必要，
+  # 也不应该在发布进行时排队等待。
+  group: xray-image-overview
+  cancel-in-progress: false
+  queue: max
+
+# 与 build-image.yml 保持同一发布目标。
+env:
+  IMAGE_NAME: taoziyoyo2566/xray-docker
+
+permissions:
+  contents: read
+
+jobs:
+  sync-overview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # secrets 上下文在 step 级 if 里不可用，只能在 job 级 env 映射成布尔值。
+      HAS_OVERVIEW_TOKEN: ${{ secrets.DOCKERHUB_OVERVIEW_TOKEN != '' }}
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # 仓库在首次推送镜像之前并不存在于 Docker Hub 上，那时同步必然失败。
+      # 那不是错误，只是还没到时候——跳过并说明，而不是留一个红叉。
+      - name: Check whether the Docker Hub repository exists yet
+        id: repo
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --location --retry 3 --retry-delay 2 \
+            --connect-timeout 10 --max-time 60 \
+            "https://hub.docker.com/v2/repositories/${IMAGE_NAME}/")"
+          case "${code}" in
+            200) echo 'exists=true' >> "${GITHUB_OUTPUT}" ;;
+            404) echo 'exists=false' >> "${GITHUB_OUTPUT}"
+                 echo "::notice::${IMAGE_NAME} does not exist on Docker Hub yet; nothing to sync" ;;
+            *)   echo "unexpected status ${code} from the Docker Hub API" >&2; exit 1 ;;
+          esac
+
+      - name: Report a missing overview token
+        if: steps.repo.outputs.exists == 'true' && env.HAS_OVERVIEW_TOKEN != 'true'
+        shell: bash
+        run: |
+          echo '::warning::DOCKERHUB_OVERVIEW_TOKEN is not set; the Docker Hub overview was not updated.'
+          echo 'Create a Docker Hub personal access token with read/write/delete scope and store it as'
+          echo 'DOCKERHUB_OVERVIEW_TOKEN. The publishing token deliberately does not carry delete rights.'
+
+      - name: Sync README to Docker Hub overview
+        if: steps.repo.outputs.exists == 'true' && env.HAS_OVERVIEW_TOKEN == 'true'
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          # 该 Action 的 README 要求 read/write/delete scope 的 PAT。刻意不复用
+          # DOCKERHUB_TOKEN：那会让日常发布令牌获得删除镜像的能力。
+          password: ${{ secrets.DOCKERHUB_OVERVIEW_TOKEN }}
+          repository: ${{ env.IMAGE_NAME }}
+          readme-filepath: ./README.md
