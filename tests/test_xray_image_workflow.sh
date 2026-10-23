@@ -241,6 +241,18 @@ if (( ro_login_line >= verify_stable_line )); then
   exit 1
 fi
 
+# 同步每 5 分钟跑一次；稳态必须只检查不拉取（D-09）。QEMU、Buildx、只读登录与
+# 验证都只在 latest 需要移动时运行。
+reconcile_block="$(sed -n '/^  reconcile-latest:/,$p' "${workflow}")"
+for step in 'Set up QEMU' 'Set up Docker Buildx' \
+            'Login to Docker Hub with read-only credentials' 'Verify current stable image'; do
+  step_if="$(grep -A1 -F -- "- name: ${step}" <<< "${reconcile_block}" | sed -n '2p' || true)"
+  if ! grep -qF "if: steps.tags.outputs.move_latest == 'true'" <<< "${step_if}"; then
+    echo "reconcile-latest runs '${step}' even when latest already points at stable" >&2
+    exit 1
+  fi
+done
+
 discover_block="$(sed -n '/^  discover:/,/^  build-missing:/p' "${workflow}" \
   | sed 's/[[:space:]]*#.*$//')"
 if grep -qF 'DOCKERHUB_TOKEN' <<< "${discover_block}"; then

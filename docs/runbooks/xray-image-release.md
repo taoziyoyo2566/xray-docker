@@ -47,7 +47,7 @@
 `Sync Xray Release Images` 仅通过以下方式触发：
 
 - `workflow_dispatch`：人工同步；
-- 每日 `04:41 UTC` 定时同步。
+- 每 5 分钟定时检查一次（cron `2-59/5 * * * *`，错开整点，见 decisions D-12b）。
 
 合并代码本身不触发 registry 写入。工作流包含三个 job：
 
@@ -98,13 +98,14 @@ Docker Hub 的标签页默认按 `last_updated` 倒序，没有按版本排序�
 
 ### 3.3 调度语义与前提
 
-- 同步 cron 为 `41 4 * * *`，即每日 `04:41 UTC` / `13:41 JST`；
+- 同步 cron 为 `2-59/5 * * * *`，即每小时第 2、7、12…57 分钟各一次；5 分钟是
+  GitHub 允许的最短间隔；
 - GitHub Actions 的 scheduled workflow 只运行仓库默认分支上的版本；本仓库的远端默认分支是
   `main`，所以修改必须先合入 `main` 才会成为定时任务的实际逻辑；
 - cron 是 best-effort，不是准点 SLA，高负载时可能延迟甚至被丢弃；公开仓库连续 60 天
   无活动时，GitHub 还会自动停用 scheduled workflow；人工补跑使用 `workflow_dispatch`，
   结果与定时运行遵循同一发现和发布路径；
-- 合并不会立刻触发 registry 写入，但合入默认分支后，下一次每日 cron 会按上述范围
+- 合并不会立刻触发 registry 写入，但合入默认分支后，下一次定时 cron 会按上述范围
   自动创建缺失标签并在必要时移动 `latest`；
 - 同步和审计共享同一 concurrency group，配置为 `cancel-in-progress: false` +
   `queue: max`，审计不会插入正在进行的发布，后启动的任务依次排队（上限 100，
@@ -307,18 +308,19 @@ curl --fail --silent --show-error --location \
 
 ## 9. 日常自动同步
 
-定时 run 无缺失标签时不构建，只验证 stable 并确认 `latest`。GitHub 新增 prerelease
-时只构建新的 `-beta`；新增 stable 时重新计算窗口、构建新的 stable，并在验证后移动
-`latest`。旧窗口标签不自动删除。
+定时 run 无缺失标签、且 `latest` 已指向 stable 时，只做检查：不构建、不拉镜像、
+不登录（decisions D-09）。GitHub 新增 prerelease 时只构建新的 `-beta`；新增 stable
+时重新计算窗口、构建新的 stable，并在验证后移动 `latest`。旧窗口标签不自动删除。
 
 如果 prerelease 后来以同版本成为 stable，必须从最终官方 stable assets fresh build
 无 `-beta` 标签；旧 `-beta` digest 不得直接改名。
 
-每日任务的运行检查清单：
+定时任务的运行检查清单：
 
 - `discover` summary 中的 stable、窗口和缺失数量合理；
 - 有缺失时，所有矩阵项完成后 `reconcile-latest` 才运行；
-- 无缺失时，没有 Docker 构建或写凭据登录，仅验证 stable/`latest` 对账；
+- 无缺失且 `latest` 已指向 stable 时，没有 Docker 构建、镜像拉取或任何 Docker Hub
+  登录，summary 里 `latest moved` 为 `false`；
 - run 失败时查看失败 job；不要因为部分标签已创建而覆盖或删除它们；
 - 超过一个预期周期没有 scheduled run 时，先检查 workflow 是否仍在默认分支、Actions
   是否启用及仓库调度状态，再人工执行同一 workflow。
@@ -336,7 +338,7 @@ curl --fail --silent --show-error --location \
    `io.taoziyoyo.xray.asset-sha256-amd64` / `-arm64` 不符。
 
 标签根本没有这些 label（本机制上线前发布的）同样视为不符，会被补建一次。
-因此改完合入默认分支即可，等每日同步自动收敛。
+因此改完合入默认分支即可，等定时同步自动收敛。
 
 需要立即生效时用 `workflow_dispatch` 手动跑一次，路径与定时运行完全相同。
 
@@ -368,8 +370,8 @@ curl --fail --silent --show-error --location \
 > **不要用构建步骤的 digest。** `docker/build-push-action` 用 `push-by-digest`
 > 推上去的是加注解**之前**的候选 index；`imagetools create` 加注解后会产生一个
 > **不同**的 digest，公开标签指向的是后者。把 `latest` 指到候选 digest 上，会得到
-> 一个没有任何标签指向、缺少 index annotation 的镜像，而且次日 `reconcile-latest`
-> 会发现它与 stable 不等，把这次回滚**原样撤销**。
+> 一个没有任何标签指向、缺少 index annotation 的镜像，而且下一轮 `reconcile-latest`
+> （约 5 分钟后）会发现它与 stable 不等，把这次回滚**原样撤销**。
 
 动手前先确认目标：
 
@@ -379,6 +381,12 @@ docker buildx imagetools inspect taoziyoyo2566/xray-docker@<digest> --raw | head
 
 只把 `latest` 移到它上面。回滚不改变任何版本标签，也不会自动部署节点。
 错误移动 `latest` 是 Docker Hub 写操作，必须单独评审目标 digest。
+
+> **回滚只能维持到下一轮同步。** 只要 `latest` 与当前 stable 版本标签的 digest
+> 不等，`reconcile-latest` 就会把它移回 stable，而同步每 5 分钟跑一次。要让回滚
+> 持续生效，先停用定时同步（`gh workflow disable build-image.yml`），再移动
+> `latest`；处理完后用 `gh workflow enable build-image.yml` 恢复。停用期间，新的
+> 上游版本也不会发布。
 
 ## 13. 审计与清理
 
@@ -422,7 +430,7 @@ Overview 源文件是 [`README.md`](../../README.md)。同步由**独立的**
 
 `DOCKERHUB_RO_TOKEN` 是可选的可靠性加固，不是发布前提。未配置时上述读取走匿名路径，
 按 runner 出口 IP 计入 Docker Hub 配额（实测响应头 `100;w=3600`，且该 IP 与其他
-GitHub Actions 用户共享）。撞限时本次 run 失败并在次日 cron 重试，属 fail-closed，
+GitHub Actions 用户共享）。撞限时本次 run 失败并在下一轮 cron 重试，属 fail-closed，
 不会发布错误内容。
 
 创建方法：Docker Hub → Account settings → Personal access tokens → New Access Token，
@@ -432,10 +440,10 @@ Access permissions **只勾 Read**（Docker Hub 的三个权限级别是 Read / 
 三个令牌刻意分开，各自只拿它那条路径需要的权限：
 
 - `DOCKERHUB_RO_TOKEN` —— `discover` 和审计都只读，不该拿到能改写 registry 的凭据。
-  `reconcile-latest` 先用它完成验证，仅在确实要移动 `latest` 时才换成读写令牌。
+  `reconcile-latest` 只在要移动 `latest` 时才登录：先用它完成验证，再换成读写令牌。
 - `DOCKERHUB_OVERVIEW_TOKEN` —— `peter-evans/dockerhub-description` 的 README 要求
   PAT 具备 **read/write/delete** scope。发布只需要 write，因此**不要**把
-  `DOCKERHUB_TOKEN` 用于 Overview：那等于让每天运行的发布令牌获得删除镜像的能力。
+  `DOCKERHUB_TOKEN` 用于 Overview：那等于让定时运行的发布令牌获得删除镜像的能力。
   这个令牌只被那一个独立工作流使用，且只在 README 变更时才会用到。
 
 不要把任何 PAT 放进 Git、日志、证据或聊天。
