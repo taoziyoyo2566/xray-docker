@@ -102,7 +102,8 @@ Docker Hub 的标签页默认按 `last_updated` 倒序，没有按版本排序�
   GitHub 允许的最短间隔；
 - GitHub Actions 的 scheduled workflow 只运行仓库默认分支上的版本；本仓库的远端默认分支是
   `main`，所以修改必须先合入 `main` 才会成为定时任务的实际逻辑；
-- cron 是 best-effort，不是准点 SLA，高负载时可能延迟甚至被丢弃；公开仓库连续 60 天
+- cron 是 best-effort，不是准点 SLA，高负载时可能延迟甚至被丢弃。本仓库的定时运行
+  一贯推迟数小时（实测 4–12 小时，见 decisions D-12b）；公开仓库连续 60 天
   无活动时，GitHub 还会自动停用 scheduled workflow；人工补跑使用 `workflow_dispatch`，
   结果与定时运行遵循同一发现和发布路径；
 - 合并不会立刻触发 registry 写入，但合入默认分支后，下一次定时 cron 会按上述范围
@@ -371,7 +372,7 @@ curl --fail --silent --show-error --location \
 > 推上去的是加注解**之前**的候选 index；`imagetools create` 加注解后会产生一个
 > **不同**的 digest，公开标签指向的是后者。把 `latest` 指到候选 digest 上，会得到
 > 一个没有任何标签指向、缺少 index annotation 的镜像，而且下一轮 `reconcile-latest`
-> （约 5 分钟后）会发现它与 stable 不等，把这次回滚**原样撤销**。
+> 会发现它与 stable 不等，把这次回滚**原样撤销**。
 
 动手前先确认目标：
 
@@ -383,10 +384,10 @@ docker buildx imagetools inspect taoziyoyo2566/xray-docker@<digest> --raw | head
 错误移动 `latest` 是 Docker Hub 写操作，必须单独评审目标 digest。
 
 > **回滚只能维持到下一轮同步。** 只要 `latest` 与当前 stable 版本标签的 digest
-> 不等，`reconcile-latest` 就会把它移回 stable，而同步每 5 分钟跑一次。要让回滚
-> 持续生效，先停用定时同步（`gh workflow disable build-image.yml`），再移动
-> `latest`；处理完后用 `gh workflow enable build-image.yml` 恢复。停用期间，新的
-> 上游版本也不会发布。
+> 不等，`reconcile-latest` 就会把它移回 stable。cron 每 5 分钟一次，GitHub 又常推迟
+> 启动，下一轮随时可能到来，无法预测。要让回滚持续生效，先停用定时同步
+> （`gh workflow disable build-image.yml`），再移动 `latest`；处理完后用
+> `gh workflow enable build-image.yml` 恢复。停用期间，新的上游版本也不会发布。
 
 ## 13. 审计与清理
 
