@@ -63,8 +63,9 @@ Full rules: [Xray multiple-config documentation](https://xtls.github.io/en/confi
 | `vX.Y.Z` | An upstream stable release |
 | `vX.Y.Z-beta` | An upstream prerelease. Never aliased to `latest`. |
 
-New upstream releases appear automatically, usually within a day. Old tags are
-kept, never deleted.
+New upstream releases appear automatically: the sync checks for them every five
+minutes, though GitHub can start a scheduled run late. Old tags are kept, never
+deleted.
 
 **No tag is immutable — not even `vX.Y.Z`.** A version tag names an upstream
 Xray version, not a fixed set of bytes: when the image definition changes (a
