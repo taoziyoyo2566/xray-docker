@@ -46,8 +46,10 @@ locally. CI also builds the image and runs `docker-build/smoke-image.sh`.
 - Only `main` runs on schedule, so a workflow change takes effect after merge.
 - Merging to `main` publishes indirectly. A change to a build input (the files
   `docker-build/build-fingerprint.sh` hashes, including the Alpine digest)
-  rebuilds and re-points every tag in the window on the next run, about five
-  minutes later. A change to `README.md` rewrites the Docker Hub overview.
+  rebuilds and re-points every tag in the window on the next run. The cron fires
+  every five minutes, but GitHub has started this repository's scheduled runs
+  4–12 hours late (`docs/decisions.md` D-12b), so the rebuild can land hours
+  after the merge. A change to `README.md` rewrites the Docker Hub overview.
   Treat such a merge as a Docker Hub write. A manual dispatch, moving `latest`,
   and deleting tags are direct writes, and each needs its own approval.
 - An idle run must stay a check: no image pull, no container, no login
